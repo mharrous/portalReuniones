@@ -1,0 +1,10 @@
+.DS_Store
+Thumbs.db
+.env
+.env.*
+.dev.vars
+node_modules/
+.wrangler/
+*.log
+
+_check-*.mjs
