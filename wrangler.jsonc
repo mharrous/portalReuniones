@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "reuniones",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-20",
+  "workers_dev": true,
+  "kv_namespaces": [
+    {
+      "binding": "MEETINGS_KV",
+      "id": "6c47ee5d85a64ebda6b2540afa546808"
+    }
+  ]
+}
