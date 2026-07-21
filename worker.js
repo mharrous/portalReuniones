@@ -8,6 +8,7 @@ const SESSION_COOKIE = "reuniones_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const LOGIN_PATH = "/login";
 const LOGOUT_PATH = "/logout";
+const CURRENT_APP_CODE = "reuniones";
 
 export default {
   async fetch(request, env) {
@@ -19,6 +20,10 @@ export default {
         return new Response("ok", {
           headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
+      }
+
+      if (path === "/api/auth/portal" && request.method === "GET") {
+        return handlePortalLogin(url, env);
       }
 
       const configError = getAuthConfigError(env);
@@ -129,6 +134,38 @@ async function handleLogin(request, env) {
   return redirectResponse(next, { "set-cookie": sessionCookie });
 }
 
+async function handlePortalLogin(url, env) {
+  if (!env.PORTAL_AUTH_DB || !env.AUTH_SECRET) {
+    return htmlResponse(renderLogin({ error: "El acceso desde el portal todavía no está configurado." }), 503);
+  }
+  const code = String(url.searchParams.get("code") || "");
+  if (!code) return htmlResponse(renderLogin({ error: "Código de acceso no válido." }), 400);
+
+  const loginCode = await env.PORTAL_AUTH_DB.prepare(`
+    DELETE FROM login_codes
+    WHERE code_hash = ? AND application_code = ? AND expires_at > CURRENT_TIMESTAMP
+    RETURNING user_id
+  `).bind(await sha256Text(code), CURRENT_APP_CODE).first();
+  if (!loginCode) return htmlResponse(renderLogin({ error: "El acceso ha caducado o ya fue utilizado." }), 403);
+
+  const user = await env.PORTAL_AUTH_DB.prepare(`
+    SELECT u.id, u.display_name, u.email, u.role, p.role AS application_role
+    FROM users u
+    LEFT JOIN user_application_permissions p
+      ON p.user_id = u.id AND p.application_code = ?
+    WHERE u.id = ? AND u.active = 1
+      AND (u.role = 'admin' OR p.active = 1)
+  `).bind(CURRENT_APP_CODE, loginCode.user_id).first();
+  if (!user) return htmlResponse(renderLogin({ error: "No tienes permiso para acceder a Reuniones." }), 403);
+
+  const sessionCookie = await createSessionCookie({
+    username: user.display_name || user.email,
+    role: user.role === "admin" || user.application_role === "admin" ? "admin" : "usuario",
+    centralUserId: Number(user.id),
+  }, env);
+  return redirectResponse("/", { "set-cookie": sessionCookie, "referrer-policy": "no-referrer" });
+}
+
 function getAuthConfigError(env) {
   if (!env || !env.AUTH_SECRET || !env.AUTH_USERS) {
     return "Faltan AUTH_SECRET y AUTH_USERS en las variables del Worker.";
@@ -208,13 +245,30 @@ async function getSessionUser(request, env) {
   const cookies = parseCookies(request.headers.get("cookie") || "");
   const token = cookies[SESSION_COOKIE];
   if (!token) return null;
-  return verifySessionToken(token, env.AUTH_SECRET);
+  const sessionUser = await verifySessionToken(token, env.AUTH_SECRET);
+  if (!sessionUser?.centralUserId) return sessionUser;
+  if (!env.PORTAL_AUTH_DB) return null;
+  const authorization = await env.PORTAL_AUTH_DB.prepare(`
+    SELECT u.display_name, u.email, u.role, p.role AS application_role
+    FROM users u
+    LEFT JOIN user_application_permissions p
+      ON p.user_id = u.id AND p.application_code = ?
+    WHERE u.id = ? AND u.active = 1
+      AND (u.role = 'admin' OR p.active = 1)
+  `).bind(CURRENT_APP_CODE, sessionUser.centralUserId).first();
+  if (!authorization) return null;
+  return {
+    username: authorization.display_name || authorization.email,
+    role: authorization.role === "admin" || authorization.application_role === "admin" ? "admin" : "usuario",
+    centralUserId: sessionUser.centralUserId,
+  };
 }
 
 async function createSessionCookie(user, env) {
   const payload = {
     username: user.username,
     role: user.role,
+    centralUserId: user.centralUserId || null,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
   };
   const encodedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -241,6 +295,7 @@ async function verifySessionToken(token, secret) {
     return {
       username: String(payload.username),
       role: payload.role === "admin" ? "admin" : "usuario",
+      centralUserId: payload.centralUserId ? Number(payload.centralUserId) : null,
     };
   } catch {
     return null;
@@ -320,6 +375,11 @@ function timingSafeEqualBytes(a, b) {
   let result = 0;
   for (let i = 0; i < a.length; i += 1) result |= a[i] ^ b[i];
   return result === 0;
+}
+
+async function sha256Text(value) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return base64UrlEncode(new Uint8Array(hash));
 }
 
 function sanitizeNextPath(value) {

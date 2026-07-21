@@ -4,6 +4,13 @@
   "main": "worker.js",
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "PORTAL_AUTH_DB",
+      "database_name": "portal-camara-auth",
+      "database_id": "9f4fbb08-6e87-4ca9-9e5f-49aa012ae3ed"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "MEETINGS_KV",

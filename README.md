@@ -76,3 +76,9 @@ npx wrangler deploy
 ```
 
 Las APIs del dock (`/api-dock` y `/api-meeting`) quedan fuera del login para que el control flotante del mini PC siga funcionando.
+
+## Acceso desde el portal central
+
+La tarjeta de Reuniones en `portal.camaraceuta.workers.dev` genera un código aleatorio de un solo uso, válido durante 45 segundos y vinculado a la aplicación `reuniones`. El Worker consume el código de forma atómica en `/api/auth/portal`, comprueba el usuario y su permiso en `portal-camara-auth` y crea una cookie propia.
+
+La entrada directa sin sesión continúa mostrando `/login`. Las sesiones creadas desde el portal vuelven a comprobar en la D1 central que el usuario sigue activo y conserva el permiso.
