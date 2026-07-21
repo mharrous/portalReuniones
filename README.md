@@ -53,25 +53,13 @@ No subas claves, tokens ni secretos al repositorio.
 
 ## Login
 
-El portal usa login con usuarios guardados en secretos de Cloudflare:
+El portal usa exclusivamente la identidad Microsoft del portal central. `AUTH_SECRET` firma la cookie propia de Reuniones y `PORTAL_AUTH_DB` comprueba en cada sesión que el usuario continúa activo y autorizado.
 
-- `AUTH_SECRET`: clave para firmar la sesión.
-- `AUTH_USERS`: JSON con usuarios y contraseñas hasheadas.
-
-Para generar nuevos usuarios:
-
-```powershell
-npm install
-npm run auth:generate -- admin=ContraseñaAdmin usuario=ContraseñaUsuario
-```
-
-Después copia los valores generados a Cloudflare:
+`AUTH_SECRET` debe mantenerse como secreto de Cloudflare:
 
 ```powershell
 $secret = "VALOR_AUTH_SECRET"
-$users = 'VALOR_AUTH_USERS'
 $secret | npx wrangler secret put AUTH_SECRET
-$users | npx wrangler secret put AUTH_USERS
 npx wrangler deploy
 ```
 
@@ -81,4 +69,4 @@ Las APIs del dock (`/api-dock` y `/api-meeting`) quedan fuera del login para que
 
 La tarjeta de Reuniones en `portal.camaraceuta.workers.dev` genera un código aleatorio de un solo uso, válido durante 45 segundos y vinculado a la aplicación `reuniones`. El Worker consume el código de forma atómica en `/api/auth/portal`, comprueba el usuario y su permiso en `portal-camara-auth` y crea una cookie propia.
 
-La entrada directa sin sesión continúa mostrando `/login`. Las sesiones creadas desde el portal vuelven a comprobar en la D1 central que el usuario sigue activo y conserva el permiso.
+La entrada directa sin sesión redirige al portal central. Si Microsoft ya mantiene la sesión corporativa, el regreso a Reuniones es automático. Las sesiones vuelven a comprobar en la D1 central que el usuario sigue activo y conserva el permiso.

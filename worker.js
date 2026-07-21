@@ -3,12 +3,13 @@ const TZ = "Europe/Madrid";
 const DEFAULT_DURATION = 60;
 const MEETINGS_KEY = "meetings";
 const DOCK_KEY = "dock_state";
-const AUTH_USERS_KEY = "auth_users";
 const SESSION_COOKIE = "reuniones_session";
 const SESSION_TTL_SECONDS = 180 * 24 * 60 * 60;
 const LOGIN_PATH = "/login";
 const LOGOUT_PATH = "/logout";
 const CURRENT_APP_CODE = "reuniones";
+const PORTAL_LAUNCH_URL = "https://portal.camaraceuta.workers.dev/api/apps/reuniones/launch";
+const PORTAL_LOGOUT_URL = "https://portal.camaraceuta.workers.dev/logout";
 
 export default {
   async fetch(request, env) {
@@ -35,18 +36,14 @@ export default {
         if (request.method === "GET") {
           const sessionUser = await getSessionUser(request, env);
           if (sessionUser) return redirectResponse("/");
-          return htmlResponse(renderLogin({ next: url.searchParams.get("next") || "/" }));
-        }
-
-        if (request.method === "POST") {
-          return handleLogin(request, env);
+          return redirectResponse(PORTAL_LAUNCH_URL);
         }
 
         return jsonResponse({ ok: false, message: "Método no permitido." }, 405);
       }
 
       if (path === LOGOUT_PATH) {
-        return redirectResponse(LOGIN_PATH, { "set-cookie": clearSessionCookie() });
+        return redirectResponse(PORTAL_LOGOUT_URL, { "set-cookie": clearSessionCookie() });
       }
 
       const isDockApi = path === "/api-dock.php" || path === "/api-dock";
@@ -74,7 +71,7 @@ export default {
         if (path.startsWith("/api/")) {
           return jsonResponse({ ok: false, message: "Sesión caducada. Inicia sesión de nuevo." }, 401);
         }
-        return redirectResponse(`${LOGIN_PATH}?next=${encodeURIComponent(path + url.search)}`);
+        return redirectResponse(PORTAL_LAUNCH_URL);
       }
 
       if (!env.MEETINGS_KV) {
@@ -83,10 +80,6 @@ export default {
 
       if (path === "/api/meetings" && request.method === "GET") {
         return jsonResponse(await getAgenda(env));
-      }
-
-      if (path === "/api/users/password" && request.method === "POST") {
-        return jsonResponse(await changeUserPassword(request, env, sessionUser));
       }
 
       if (path === "/api/meetings" && request.method === "POST") {
@@ -114,25 +107,6 @@ export default {
     }
   }
 };
-
-async function handleLogin(request, env) {
-  const form = await request.formData();
-  const username = clean(form.get("username") || "");
-  const password = String(form.get("password") || "");
-  const next = sanitizeNextPath(String(form.get("next") || "/"));
-  const user = await validateCredentials(username, password, env);
-
-  if (!user) {
-    return htmlResponse(renderLogin({
-      error: "Usuario o contraseña incorrectos.",
-      username,
-      next,
-    }), 401);
-  }
-
-  const sessionCookie = await createSessionCookie(user, env);
-  return redirectResponse(next, { "set-cookie": sessionCookie });
-}
 
 async function handlePortalLogin(url, env) {
   if (!env.PORTAL_AUTH_DB || !env.AUTH_SECRET) {
@@ -167,78 +141,9 @@ async function handlePortalLogin(url, env) {
 }
 
 function getAuthConfigError(env) {
-  if (!env || !env.AUTH_SECRET || !env.AUTH_USERS) {
-    return "Faltan AUTH_SECRET y AUTH_USERS en las variables del Worker.";
-  }
-
-  try {
-    const users = JSON.parse(env.AUTH_USERS);
-    if (!Array.isArray(users) || users.length === 0) {
-      return "AUTH_USERS debe contener al menos un usuario.";
-    }
-  } catch {
-    return "AUTH_USERS no tiene un JSON válido.";
-  }
-
-  return "";
-}
-
-async function validateCredentials(username, password, env) {
-  const users = await loadAuthUsers(env);
-  const user = users.find((item) => String(item.username || "").toLowerCase() === username.toLowerCase());
-  if (!user || !user.passwordHash || !user.role) return null;
-
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) return null;
-
-  return {
-    username: user.username,
-    role: user.role === "admin" ? "admin" : "usuario",
-  };
-}
-
-async function loadAuthUsers(env) {
-  if (env.MEETINGS_KV) {
-    const raw = await env.MEETINGS_KV.get(AUTH_USERS_KEY);
-    if (raw) {
-      try {
-        const storedUsers = JSON.parse(raw);
-        if (Array.isArray(storedUsers) && storedUsers.length > 0) return storedUsers;
-      } catch {
-        // Si el valor editable está corrupto, se usan los usuarios base del secreto.
-      }
-    }
-  }
-
-  const secretUsers = JSON.parse(env.AUTH_USERS);
-  return Array.isArray(secretUsers) ? secretUsers : [];
-}
-
-async function saveAuthUsers(env, users) {
-  if (!env.MEETINGS_KV) throw new Error("No está configurado el almacenamiento KV.");
-  await env.MEETINGS_KV.put(AUTH_USERS_KEY, JSON.stringify(users, null, 2));
-}
-
-async function changeUserPassword(request, env, sessionUser) {
-  if (sessionUser.role !== "admin") {
-    return { ok: false, message: "Solo el administrador puede cambiar contraseñas." };
-  }
-
-  const data = await readRequestData(request);
-  const username = clean(data.username || "usuario");
-  const newPassword = String(data.new_password || "");
-
-  if (newPassword.length < 8) {
-    return { ok: false, message: "La nueva contraseña debe tener al menos 8 caracteres." };
-  }
-
-  const users = await loadAuthUsers(env);
-  const user = users.find((item) => String(item.username || "").toLowerCase() === username.toLowerCase());
-  if (!user) return { ok: false, message: "Usuario no encontrado." };
-
-  user.passwordHash = await createPasswordHash(newPassword);
-  await saveAuthUsers(env, users);
-  return { ok: true, message: "Contraseña de usuario actualizada." };
+  return !env?.AUTH_SECRET || !env?.PORTAL_AUTH_DB
+    ? "Faltan AUTH_SECRET o la conexión con el portal central."
+    : "";
 }
 
 async function getSessionUser(request, env) {
@@ -246,7 +151,7 @@ async function getSessionUser(request, env) {
   const token = cookies[SESSION_COOKIE];
   if (!token) return null;
   const sessionUser = await verifySessionToken(token, env.AUTH_SECRET);
-  if (!sessionUser?.centralUserId) return sessionUser;
+  if (!sessionUser?.centralUserId) return null;
   if (!env.PORTAL_AUTH_DB) return null;
   const authorization = await env.PORTAL_AUTH_DB.prepare(`
     SELECT u.display_name, u.email, u.role, p.role AS application_role
@@ -312,32 +217,6 @@ async function signValue(value, secret) {
   );
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
   return base64UrlEncode(new Uint8Array(signature));
-}
-
-async function verifyPassword(password, passwordHash) {
-  const parts = String(passwordHash).split("$");
-  if (parts.length !== 3 || parts[0] !== "sha256") return false;
-
-  const salt = base64UrlDecode(parts[1]);
-  const expectedHash = base64UrlDecode(parts[2]);
-  const actualHash = await sha256PasswordHash(password, salt);
-  return timingSafeEqualBytes(actualHash, expectedHash);
-}
-
-async function sha256PasswordHash(password, salt) {
-  const passwordBytes = new TextEncoder().encode(password);
-  const payload = new Uint8Array(salt.length + passwordBytes.length);
-  payload.set(salt, 0);
-  payload.set(passwordBytes, salt.length);
-  const hash = await crypto.subtle.digest("SHA-256", payload);
-  return new Uint8Array(hash);
-}
-
-async function createPasswordHash(password) {
-  const salt = new Uint8Array(16);
-  crypto.getRandomValues(salt);
-  const hash = await sha256PasswordHash(password, salt);
-  return `sha256$${base64UrlEncode(salt)}$${base64UrlEncode(hash)}`;
 }
 
 function parseCookies(cookieHeader) {
@@ -841,25 +720,16 @@ function renderLoginSetupError(message) {
   `, "Configurar login");
 }
 
-function renderLogin({ error = "", username = "", next = "/" } = {}) {
+function renderLogin({ error = "" } = {}) {
   return renderLoginShell(`
-    <form class="login-card" method="post" action="${LOGIN_PATH}" autocomplete="on">
+    <section class="login-card">
       <div class="mark">C</div>
       <p class="eyebrow">Cámara de Ceuta</p>
       <h1>Acceso a reuniones</h1>
-      <p class="copy">Inicia sesión para ver, añadir y gestionar reservas de la sala.</p>
+      <p class="copy">El acceso se realiza exclusivamente con la cuenta corporativa de Microsoft.</p>
       ${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}
-      <input type="hidden" name="next" value="${escapeHtml(sanitizeNextPath(next))}">
-      <label>
-        <span>Usuario</span>
-        <input name="username" type="text" value="${escapeHtml(username)}" autocomplete="username" required autofocus>
-      </label>
-      <label>
-        <span>Contraseña</span>
-        <input name="password" type="password" autocomplete="current-password" required>
-      </label>
-      <button type="submit">Entrar</button>
-    </form>
+      <a class="login-button" href="${PORTAL_LAUNCH_URL}">Entrar con Microsoft</a>
+    </section>
   `, "Acceso");
 }
 
@@ -871,7 +741,7 @@ function renderLoginShell(content, title) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} | Portal de reuniones</title>
 <style>
-:root{--red:#e11d2f;--navy:#0b2d4d;--gold:#d6b20e;--line:#d8e0ea;--ink:#111827;--muted:#667085;--bg:#f4f1ec}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top left,rgba(225,29,47,.14),transparent 32%),radial-gradient(circle at top right,rgba(214,178,14,.18),transparent 34%),var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}.login-card{width:min(440px,100%);padding:34px;border:1px solid var(--line);border-top:7px solid var(--red);border-radius:24px;background:rgba(255,255,255,.94);box-shadow:0 28px 80px rgba(11,45,77,.16)}.mark{width:62px;height:62px;border-radius:18px;display:grid;place-items:center;margin-bottom:22px;color:#fff;background:linear-gradient(135deg,var(--navy),var(--red));font-size:1.45rem;font-weight:950}.eyebrow{margin:0 0 8px;color:var(--red);font-size:.78rem;font-weight:950;letter-spacing:.16em;text-transform:uppercase}h1{margin:0 0 10px;color:var(--navy);font-size:2.15rem;line-height:1.05}.copy{margin:0 0 22px;color:var(--muted);font-weight:700;line-height:1.55}.error{margin:0 0 18px;padding:12px 14px;border:1px solid rgba(225,29,47,.25);border-radius:14px;background:#fff1f3;color:#a50f1e;font-weight:900}label{display:grid;gap:7px;margin-bottom:16px;color:var(--navy);font-weight:900}input{width:100%;min-height:50px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;font:inherit}input:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 4px rgba(225,29,47,.12)}button{width:100%;min-height:52px;border:0;border-radius:999px;background:linear-gradient(135deg,var(--red),#f43f5e);color:#fff;font-weight:950;font-size:1rem;cursor:pointer;box-shadow:0 18px 34px rgba(225,29,47,.24)}
+:root{--red:#e11d2f;--navy:#0b2d4d;--gold:#d6b20e;--line:#d8e0ea;--ink:#111827;--muted:#667085;--bg:#f4f1ec}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top left,rgba(225,29,47,.14),transparent 32%),radial-gradient(circle at top right,rgba(214,178,14,.18),transparent 34%),var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}.login-card{width:min(440px,100%);padding:34px;border:1px solid var(--line);border-top:7px solid var(--red);border-radius:24px;background:rgba(255,255,255,.94);box-shadow:0 28px 80px rgba(11,45,77,.16)}.mark{width:62px;height:62px;border-radius:18px;display:grid;place-items:center;margin-bottom:22px;color:#fff;background:linear-gradient(135deg,var(--navy),var(--red));font-size:1.45rem;font-weight:950}.eyebrow{margin:0 0 8px;color:var(--red);font-size:.78rem;font-weight:950;letter-spacing:.16em;text-transform:uppercase}h1{margin:0 0 10px;color:var(--navy);font-size:2.15rem;line-height:1.05}.copy{margin:0 0 22px;color:var(--muted);font-weight:700;line-height:1.55}.error{margin:0 0 18px;padding:12px 14px;border:1px solid rgba(225,29,47,.25);border-radius:14px;background:#fff1f3;color:#a50f1e;font-weight:900}.login-button{display:block;width:100%;min-height:52px;padding:16px 20px;border-radius:999px;background:linear-gradient(135deg,var(--red),#f43f5e);color:#fff;font-weight:950;font-size:1rem;text-align:center;text-decoration:none;box-shadow:0 18px 34px rgba(225,29,47,.24)}
 </style>
 </head>
 <body>${content}</body>
@@ -882,22 +752,6 @@ function renderApp(initialView, sessionUser) {
   const sessionLabel = escapeHtml(sessionUser?.username || "Usuario");
   const isAdmin = sessionUser?.role === "admin";
   const roleBadge = isAdmin ? "<strong>Admin</strong>" : "";
-  const adminPasswordPanel = isAdmin ? `
-      <div class="admin-password-card">
-        <div>
-          <p class="eyebrow">Administración</p>
-          <h3>Cambiar contraseña de usuario</h3>
-          <p class="muted">Actualiza la contraseña del acceso normal sin tocar el despliegue.</p>
-        </div>
-        <form id="passwordForm" class="password-form">
-          <input type="hidden" name="username" value="usuario">
-          <label>
-            <span>Nueva contraseña</span>
-            <input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Mínimo 8 caracteres" required>
-          </label>
-          <button class="btn btn-filled" type="submit">Actualizar contraseña</button>
-        </form>
-      </div>` : "";
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -962,7 +816,7 @@ function renderApp(initialView, sessionUser) {
   </section>
 
   <section class="views" id="manageView">
-    <section class="form-panel"><div class="section-heading"><div><p class="eyebrow">Gestión</p><h2>Borrar reuniones</h2></div><button class="btn" data-view="home">Volver</button></div>${adminPasswordPanel}<div id="manageList"></div></section>
+    <section class="form-panel"><div class="section-heading"><div><p class="eyebrow">Gestión</p><h2>Borrar reuniones</h2></div><button class="btn" data-view="home">Volver</button></div><div id="manageList"></div></section>
   </section>
 </main>
 
@@ -1207,17 +1061,6 @@ $('#addForm').addEventListener('submit', async (event) => {
   setView('home');
   await loadAgenda();
 });
-
-const passwordForm = $('#passwordForm');
-if (passwordForm) {
-  passwordForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const body = new FormData(event.currentTarget);
-    const result = await api('/api/users/password', { method: 'POST', body });
-    showNotice(result.message);
-    if (result.ok) event.currentTarget.reset();
-  });
-}
 
 tick();
 setInterval(tick, 1000);
