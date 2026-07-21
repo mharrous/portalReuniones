@@ -50,3 +50,29 @@ Para ejecutarlo en el mini PC, usa:
 ## Seguridad
 
 No subas claves, tokens ni secretos al repositorio.
+
+## Login
+
+El portal usa login con usuarios guardados en secretos de Cloudflare:
+
+- `AUTH_SECRET`: clave para firmar la sesión.
+- `AUTH_USERS`: JSON con usuarios y contraseñas hasheadas.
+
+Para generar nuevos usuarios:
+
+```powershell
+npm install
+npm run auth:generate -- admin=ContraseñaAdmin usuario=ContraseñaUsuario
+```
+
+Después copia los valores generados a Cloudflare:
+
+```powershell
+$secret = "VALOR_AUTH_SECRET"
+$users = 'VALOR_AUTH_USERS'
+$secret | npx wrangler secret put AUTH_SECRET
+$users | npx wrangler secret put AUTH_USERS
+npx wrangler deploy
+```
+
+Las APIs del dock (`/api-dock` y `/api-meeting`) quedan fuera del login para que el control flotante del mini PC siga funcionando.

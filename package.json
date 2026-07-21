@@ -1,8 +1,11 @@
 {
   "name": "portal-reuniones-camara",
   "private": true,
+  "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "check": "node --check worker.js",
+    "auth:generate": "node tools/generate-auth-users.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.112.0"

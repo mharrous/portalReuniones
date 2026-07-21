@@ -6,5 +6,6 @@ Thumbs.db
 node_modules/
 .wrangler/
 *.log
+.auth-local-secret.json
 
 _check-*.mjs
