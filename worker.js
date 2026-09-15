@@ -1,7 +1,11 @@
+import { mergeRecentMeetingHistory } from "./meeting-history.js";
+
 const ROOM_NAME = "Sala de reuniones";
 const TZ = "Europe/Madrid";
 const DEFAULT_DURATION = 60;
+const AUTO_DELETE_AFTER_MINUTES = 60;
 const MEETINGS_KEY = "meetings";
+const HISTORY_KEY = "meeting_history";
 const DOCK_KEY = "dock_state";
 const SESSION_COOKIE = "reuniones_session";
 const SESSION_TTL_SECONDS = 180 * 24 * 60 * 60;
@@ -79,7 +83,7 @@ export default {
       }
 
       if (path === "/api/meetings" && request.method === "GET") {
-        return jsonResponse(await getAgenda(env));
+        return jsonResponse(await getAgenda(env, { includeHistory: true }));
       }
 
       if (path === "/api/meetings" && request.method === "POST") {
@@ -294,6 +298,68 @@ async function saveMeetings(env, meetings) {
   await env.MEETINGS_KV.put(MEETINGS_KEY, JSON.stringify(meetings, null, 2));
 }
 
+async function loadMeetingHistory(env) {
+  const raw = await env.MEETINGS_KV.get(HISTORY_KEY);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function archiveMeetings(env, meetings) {
+  if (!meetings.length) return loadMeetingHistory(env);
+
+  const completedMeetings = meetings.map((meeting) => ({
+    id: meeting.id,
+    title: meeting.title,
+    date: meeting.date,
+    time: meeting.time,
+    url: meeting.url,
+    duration: meeting.duration,
+    completed_at: meeting.ended_at || meetingEnd(meeting).toISOString(),
+  }));
+  const history = mergeRecentMeetingHistory(await loadMeetingHistory(env), completedMeetings);
+  await env.MEETINGS_KV.put(HISTORY_KEY, JSON.stringify(history, null, 2));
+  return history;
+}
+
+async function loadPrunedMeetings(env, now = new Date()) {
+  const meetings = await loadMeetings(env);
+  const visibleMeetings = meetings.filter((meeting) => !shouldAutoDeleteMeeting(meeting, now));
+
+  if (visibleMeetings.length !== meetings.length) {
+    const visibleIds = new Set(visibleMeetings.map((meeting) => meeting.id));
+    const completedMeetings = meetings.filter((meeting) => !visibleIds.has(meeting.id));
+    await archiveMeetings(env, completedMeetings);
+    await saveMeetings(env, visibleMeetings);
+    await clearDockIfMeetingWasDeleted(env, visibleMeetings);
+  }
+
+  return visibleMeetings;
+}
+
+async function clearDockIfMeetingWasDeleted(env, meetings) {
+  const raw = await env.MEETINGS_KV.get(DOCK_KEY);
+  if (!raw) return;
+
+  const state = safeJson(raw, {});
+  const activeMeetingId = state.active_meeting_id || "";
+  if (activeMeetingId && !meetings.some((meeting) => meeting.id === activeMeetingId)) {
+    await env.MEETINGS_KV.delete(DOCK_KEY);
+  }
+}
+
+function shouldAutoDeleteMeeting(meeting, now = new Date()) {
+  const start = meetingStart(meeting).getTime();
+  const end = meetingEnd(meeting).getTime();
+  const deleteAt = Math.max(end, start + AUTO_DELETE_AFTER_MINUTES * 60000);
+  return Number.isFinite(deleteAt) && deleteAt < now.getTime();
+}
+
 async function createMeeting(request, env) {
   const data = await readRequestData(request);
   const title = clean(data.title || "");
@@ -311,7 +377,7 @@ async function createMeeting(request, env) {
     return { ok: false, message: "El enlace debe empezar por https://" };
   }
 
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const newMeeting = { date, time, duration };
   const conflictingMeeting = findMeetingConflict(meetings, newMeeting);
   if (conflictingMeeting) {
@@ -354,7 +420,7 @@ async function updateMeeting(request, env, id) {
     return { ok: false, message: "El enlace debe empezar por https://" };
   }
 
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const meeting = meetings.find((item) => item.id === id);
   if (!meeting) return { ok: false, message: "Reunión no encontrada." };
 
@@ -406,18 +472,20 @@ function findMeetingConflict(meetings, candidate, excludedId = "") {
 }
 
 async function finishMeeting(env, id) {
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const meeting = meetings.find((item) => item.id === id);
   if (!meeting) return { ok: false, message: "Reunión no encontrada." };
 
-  meeting.ended_at = new Date().toISOString();
-  await saveMeetings(env, meetings);
+  const finishedMeeting = { ...meeting, ended_at: new Date().toISOString() };
+  const updatedMeetings = meetings.map((item) => item.id === id ? finishedMeeting : item);
+  await archiveMeetings(env, [finishedMeeting]);
+  await saveMeetings(env, updatedMeetings);
   await env.MEETINGS_KV.delete(DOCK_KEY);
   return { ok: true, message: "Reunión finalizada." };
 }
 
 async function extendMeeting(env, id, minutes) {
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const meeting = meetings.find((item) => item.id === id);
   if (!meeting) return { ok: false, message: "Reunión no encontrada." };
 
@@ -427,7 +495,7 @@ async function extendMeeting(env, id, minutes) {
 }
 
 async function deleteMeeting(env, id) {
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const filtered = meetings.filter((item) => item.id !== id);
   if (filtered.length === meetings.length) return { ok: false, message: "Reunión no encontrada." };
 
@@ -463,7 +531,7 @@ async function getDockState(env) {
   const raw = await env.MEETINGS_KV.get(DOCK_KEY);
   const state = raw ? safeJson(raw, {}) : {};
   const meetingId = state.active_meeting_id || "";
-  const meetings = await loadMeetings(env);
+  const meetings = await loadPrunedMeetings(env);
   const meeting = meetings.find((item) => item.id === meetingId);
 
   if (!meeting || isFinished(meeting) || meetingEnd(meeting) < new Date()) {
@@ -484,9 +552,9 @@ async function getDockState(env) {
   return meetingApiPayload(enrichMeeting(meeting));
 }
 
-async function getAgenda(env) {
+async function getAgenda(env, { includeHistory = false } = {}) {
   const now = new Date();
-  const meetings = (await loadMeetings(env))
+  const meetings = (await loadPrunedMeetings(env, now))
     .filter((meeting) => !isFinished(meeting) && meetingEnd(meeting) >= now)
     .map(enrichMeeting)
     .sort((a, b) => a.start_ts - b.start_ts);
@@ -497,7 +565,7 @@ async function getAgenda(env) {
   const todayKey = formatParts(now).dateKey;
   const todayCount = meetings.filter((meeting) => meeting.date === todayKey).length;
 
-  return {
+  const agenda = {
     ok: true,
     room_name: ROOM_NAME,
     now: formatClock(now),
@@ -507,6 +575,37 @@ async function getAgenda(env) {
     featured,
     meetings,
   };
+
+  if (!includeHistory) return agenda;
+
+  const history = mergeRecentMeetingHistory(await loadMeetingHistory(env), [])
+    .map(historyMeetingPayload);
+
+  return { ...agenda, history };
+}
+
+function historyMeetingPayload(meeting) {
+  const enriched = enrichMeeting(meeting);
+  const url = safeHttpsUrl(enriched.url);
+
+  return {
+    id: enriched.id || "",
+    title: enriched.title || "Reunión sin título",
+    url,
+    platform: enriched.platform,
+    date_label: enriched.date_label,
+    time_range: enriched.time_range,
+    completed_at: enriched.completed_at || "",
+  };
+}
+
+function safeHttpsUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
 }
 
 function enrichMeeting(meeting) {
@@ -771,6 +870,7 @@ function renderApp(initialView, sessionUser) {
 .hero-panel h2{max-width:980px!important;font-size:clamp(2rem,3.05vw,3.05rem)!important;line-height:1.08!important;letter-spacing:-.035em!important}.hero-copy{padding:26px 30px!important}.hero-meta{margin-top:12px!important}
 .admin-password-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.72fr);gap:22px;align-items:end;margin-bottom:18px;padding:20px;border:1.5px solid rgba(18,60,104,.28);border-left:7px solid var(--gold);border-radius:16px;background:linear-gradient(135deg,#ffffff,#f8fbff);box-shadow:0 12px 28px rgba(11,45,77,.08)}.admin-password-card h3{margin:0 0 8px;color:var(--navy);font-size:1.35rem}.password-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}.password-form label{display:grid;gap:7px;color:var(--navy);font-weight:900}.password-form span{font-size:.9rem}.password-form .btn{min-height:48px;white-space:nowrap}@media(max-width:900px){.admin-password-card,.password-form{grid-template-columns:1fr}}
 .top-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}.session-card{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--navy);font-weight:950;box-shadow:0 10px 24px rgba(11,45,77,.08)}.session-card strong{color:var(--red);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase}.session-card a{color:var(--muted);text-decoration:none;font-size:.88rem}.session-card a:hover{color:var(--red)}@media(max-width:900px){.top-actions{width:100%;justify-content:space-between}.session-card{width:100%;justify-content:center}}
+.history-panel{margin-top:18px}.history-limit{padding:7px 11px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.history-list{display:grid;gap:10px}.history-card{display:grid;grid-template-columns:190px minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px;border:1px solid var(--line);border-left:7px solid var(--navy);border-radius:8px;background:linear-gradient(90deg,#f4f7fb,#fff 24%)}.history-card h3{margin:7px 0 0;font-size:1.2rem}.history-link{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--navy);font-weight:900;text-decoration:none}.history-link:hover{border-color:var(--navy);box-shadow:0 10px 24px rgba(11,45,77,.10)}@media(max-width:900px){.history-card{grid-template-columns:1fr}.history-link{width:100%}}
 </style>
 </head>
 <body>
@@ -797,6 +897,10 @@ function renderApp(initialView, sessionUser) {
       <div class="section-heading"><div><p class="eyebrow">Agenda de la sala</p><h2>Reuniones activas y próximas</h2></div></div>
       <div class="agenda-toolbar"><div class="agenda-toolbar-text"><strong>Acciones de agenda</strong><span>Gestiona o añade una reserva antes del listado.</span></div><div class="agenda-toolbar-actions"><button class="btn" data-view="manage">Gestionar agenda</button><button class="btn btn-filled" data-view="add">Añadir reunión</button></div></div>
       <div id="meetingList"></div>
+    </section>
+    <section class="agenda-panel history-panel">
+      <div class="section-heading"><div><p class="eyebrow">Historial</p><h2>Últimas reuniones</h2></div><span class="history-limit">Últimas 5</span></div>
+      <div id="historyContainer"></div>
     </section>
   </section>
 
@@ -873,6 +977,7 @@ function renderHome() {
   $('#visibleCount').textContent = agenda.visible_count;
   renderFeatured();
   renderList();
+  renderHistory();
 }
 
 function chipStatus(meeting) { return '<span class="status-chip ' + meeting.status_class + '">' + escapeHtml(meeting.status) + '</span>'; }
@@ -901,6 +1006,17 @@ function renderList() {
   list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions"><a class="join-button" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a><button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
   bindJoinButtons();
   bindEditButtons();
+}
+
+function renderHistory() {
+  const container = $('#historyContainer');
+  const history = Array.isArray(agenda.history) ? agenda.history : [];
+  if (!history.length) {
+    container.innerHTML = '<div class="empty-state"><h3>Todavía no hay reuniones finalizadas</h3><p>Las cinco últimas aparecerán aquí automáticamente con su enlace.</p></div>';
+    return;
+  }
+
+  container.innerHTML = '<div class="history-list">' + history.map((meeting) => '<article class="history-card"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div><div class="meeting-badges">' + chipPlatform(meeting) + '<span class="status-chip scheduled">Finalizada</span></div><h3>' + escapeHtml(meeting.title) + '</h3></div>' + (meeting.url ? '<a class="history-link" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer">Abrir enlace ↗</a>' : '<span class="muted">Sin enlace disponible</span>') + '</article>').join('') + '</div>';
 }
 
 function renderManage() {

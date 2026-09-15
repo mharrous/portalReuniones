@@ -20,7 +20,9 @@ Este Worker necesita una vinculaci?n KV llamada exactamente:
 MEETINGS_KV
 ```
 
-Ah? se guardan las reuniones y el estado del dock.
+Ah? se guardan las reuniones, las cinco últimas reuniones finalizadas y el estado del dock.
+
+El historial solo se entrega a usuarios autenticados. Conserva el título, la fecha, la plataforma y el enlace; las reuniones borradas manualmente no se archivan.
 
 ## Despliegue manual seguro
 
