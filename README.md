@@ -24,6 +24,12 @@ Ah? se guardan las reuniones, las cinco últimas reuniones finalizadas y el esta
 
 El historial solo se entrega a usuarios autenticados. Conserva el título, la fecha, la plataforma y el enlace; las reuniones borradas manualmente no se archivan.
 
+## Salas disponibles
+
+Al crear o editar una reunión se selecciona `Sala Pleno` o `Sala Orientación`.
+Los conflictos de horario se validan por sala, por lo que ambas salas pueden reservarse a la misma hora.
+Las reuniones antiguas que no tengan sala asignada se muestran como `Sala Pleno`.
+
 ## Despliegue manual seguro
 
 Para actualizar el Worker sin tocar la configuraci?n KV:

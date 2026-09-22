@@ -121,3 +121,41 @@ test("la agenda autenticada devuelve cinco reuniones como máximo y sin notas", 
   assert.equal(body.history[0].url, "https://meet.example.test/history-1");
   assert.equal("notes" in body.history[0], false);
 });
+
+test("la API permite el mismo horario en salas distintas y bloquea solapes por sala", async () => {
+  const env = {
+    AUTH_SECRET,
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  async function createMeeting(room, title) {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        title,
+        date: "2099-10-20",
+        time: "10:00",
+        duration: "60",
+        room,
+        url: "https://meet.example.test/reserva",
+      }),
+    }), env);
+
+    return response.json();
+  }
+
+  const pleno = await createMeeting("sala-pleno", "Reunión en Pleno");
+  const orientacion = await createMeeting("sala-orientacion", "Reunión en Orientación");
+  const plenoDuplicado = await createMeeting("sala-pleno", "Reunión duplicada");
+
+  assert.equal(pleno.ok, true);
+  assert.equal(orientacion.ok, true);
+  assert.equal(plenoDuplicado.ok, false);
+  assert.match(plenoDuplicado.message, /Sala Pleno ya está ocupada/);
+});

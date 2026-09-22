@@ -1,6 +1,11 @@
 import { mergeRecentMeetingHistory } from "./meeting-history.js";
 
-const ROOM_NAME = "Sala de reuniones";
+const ROOM_NAME = "Salas de reuniones";
+const DEFAULT_ROOM_ID = "sala-pleno";
+const MEETING_ROOMS = Object.freeze([
+  { id: "sala-pleno", name: "Sala Pleno" },
+  { id: "sala-orientacion", name: "Sala Orientación" },
+]);
 const TZ = "Europe/Madrid";
 const DEFAULT_DURATION = 60;
 const AUTO_DELETE_AFTER_MINUTES = 60;
@@ -320,6 +325,7 @@ async function archiveMeetings(env, meetings) {
     time: meeting.time,
     url: meeting.url,
     duration: meeting.duration,
+    room: meetingRoomId(meeting),
     completed_at: meeting.ended_at || meetingEnd(meeting).toISOString(),
   }));
   const history = mergeRecentMeetingHistory(await loadMeetingHistory(env), completedMeetings);
@@ -367,10 +373,11 @@ async function createMeeting(request, env) {
   const time = clean(data.time || "");
   const url = clean(data.url || "");
   const notes = clean(data.notes || "");
+  const room = requestedRoomId(data.room || "");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
 
-  if (!date || !time || !url) {
-    return { ok: false, message: "Completa fecha, hora y enlace." };
+  if (!date || !time || !url || !room) {
+    return { ok: false, message: "Completa sala, fecha, hora y enlace." };
   }
 
   if (!url.startsWith("https://")) {
@@ -378,13 +385,13 @@ async function createMeeting(request, env) {
   }
 
   const meetings = await loadPrunedMeetings(env);
-  const newMeeting = { date, time, duration };
+  const newMeeting = { date, time, duration, room };
   const conflictingMeeting = findMeetingConflict(meetings, newMeeting);
   if (conflictingMeeting) {
     const conflict = enrichMeeting(conflictingMeeting);
     return {
       ok: false,
-      message: `La sala ya está ocupada ese día y hora por "${conflict.title}" (${conflict.time_range}).`,
+      message: `${conflict.room_name} ya está ocupada ese día y hora por "${conflict.title}" (${conflict.time_range}).`,
     };
   }
 
@@ -396,6 +403,7 @@ async function createMeeting(request, env) {
     url,
     notes,
     duration,
+    room,
     created_at: new Date().toISOString(),
   });
 
@@ -410,10 +418,11 @@ async function updateMeeting(request, env, id) {
   const time = clean(data.time || "");
   const url = clean(data.url || "");
   const notes = clean(data.notes || "");
+  const room = requestedRoomId(data.room || "");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
 
-  if (!date || !time || !url) {
-    return { ok: false, message: "Completa fecha, hora y enlace." };
+  if (!date || !time || !url || !room) {
+    return { ok: false, message: "Completa sala, fecha, hora y enlace." };
   }
 
   if (!url.startsWith("https://")) {
@@ -424,13 +433,13 @@ async function updateMeeting(request, env, id) {
   const meeting = meetings.find((item) => item.id === id);
   if (!meeting) return { ok: false, message: "Reunión no encontrada." };
 
-  const candidate = { date, time, duration };
+  const candidate = { date, time, duration, room };
   const conflictingMeeting = findMeetingConflict(meetings, candidate, id);
   if (conflictingMeeting) {
     const conflict = enrichMeeting(conflictingMeeting);
     return {
       ok: false,
-      message: `La sala ya está ocupada ese día y hora por "${conflict.title}" (${conflict.time_range}).`,
+      message: `${conflict.room_name} ya está ocupada ese día y hora por "${conflict.title}" (${conflict.time_range}).`,
     };
   }
 
@@ -440,6 +449,7 @@ async function updateMeeting(request, env, id) {
   meeting.url = url;
   meeting.notes = notes;
   meeting.duration = duration;
+  meeting.room = room;
   meeting.updated_at = new Date().toISOString();
   delete meeting.ended_at;
 
@@ -454,7 +464,26 @@ async function updateMeetingAction(env, id, action) {
   return { ok: false, message: "Acción no válida." };
 }
 
-function findMeetingConflict(meetings, candidate, excludedId = "") {
+function requestedRoomId(value) {
+  const normalized = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+  const room = MEETING_ROOMS.find((item) => item.id === normalized || item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() === normalized);
+  return room?.id || "";
+}
+
+export function meetingRoomId(meeting) {
+  return requestedRoomId(meeting?.room) || DEFAULT_ROOM_ID;
+}
+
+function meetingRoomName(meeting) {
+  const roomId = meetingRoomId(meeting);
+  return MEETING_ROOMS.find((room) => room.id === roomId)?.name || MEETING_ROOMS[0].name;
+}
+
+export function findMeetingConflict(meetings, candidate, excludedId = "") {
   const candidateStart = meetingStart(candidate);
   const candidateEnd = meetingEnd(candidate);
   const now = new Date();
@@ -462,6 +491,7 @@ function findMeetingConflict(meetings, candidate, excludedId = "") {
   return meetings.find((meeting) => {
     if ((meeting.id || "") === excludedId) return false;
     if (isFinished(meeting)) return false;
+    if (meetingRoomId(meeting) !== meetingRoomId(candidate)) return false;
 
     const existingEnd = meetingEnd(meeting);
     if (existingEnd < now) return false;
@@ -564,12 +594,16 @@ async function getAgenda(env, { includeHistory = false } = {}) {
   const featured = ongoing || next || null;
   const todayKey = formatParts(now).dateKey;
   const todayCount = meetings.filter((meeting) => meeting.date === todayKey).length;
+  const occupiedRooms = MEETING_ROOMS.filter((room) => meetings.some((meeting) => meeting.room === room.id && meeting.start_ts <= now.getTime() && meeting.end_ts >= now.getTime()));
 
   const agenda = {
     ok: true,
     room_name: ROOM_NAME,
     now: formatClock(now),
     room_busy: Boolean(ongoing),
+    busy_room_count: occupiedRooms.length,
+    occupied_room_names: occupiedRooms.map((room) => room.name),
+    rooms: MEETING_ROOMS,
     today_count: todayCount,
     visible_count: meetings.length,
     featured,
@@ -593,6 +627,8 @@ function historyMeetingPayload(meeting) {
     title: enriched.title || "Reunión sin título",
     url,
     platform: enriched.platform,
+    room: enriched.room,
+    room_name: enriched.room_name,
     date_label: enriched.date_label,
     time_range: enriched.time_range,
     completed_at: enriched.completed_at || "",
@@ -615,6 +651,8 @@ function enrichMeeting(meeting) {
 
   return {
     ...meeting,
+    room: meetingRoomId(meeting),
+    room_name: meetingRoomName(meeting),
     platform: detectPlatform(meeting.url || ""),
     status: status.label,
     status_class: status.class,
@@ -629,7 +667,8 @@ function enrichMeeting(meeting) {
 function meetingApiPayload(meeting) {
   return {
     has_meeting: true,
-    room_name: ROOM_NAME,
+    room_name: meeting.room_name || meetingRoomName(meeting),
+    room: meeting.room || meetingRoomId(meeting),
     id: meeting.id || "",
     title: meeting.title || "Reunión sin título",
     platform: meeting.platform || detectPlatform(meeting.url || ""),
@@ -871,6 +910,7 @@ function renderApp(initialView, sessionUser) {
 .admin-password-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.72fr);gap:22px;align-items:end;margin-bottom:18px;padding:20px;border:1.5px solid rgba(18,60,104,.28);border-left:7px solid var(--gold);border-radius:16px;background:linear-gradient(135deg,#ffffff,#f8fbff);box-shadow:0 12px 28px rgba(11,45,77,.08)}.admin-password-card h3{margin:0 0 8px;color:var(--navy);font-size:1.35rem}.password-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}.password-form label{display:grid;gap:7px;color:var(--navy);font-weight:900}.password-form span{font-size:.9rem}.password-form .btn{min-height:48px;white-space:nowrap}@media(max-width:900px){.admin-password-card,.password-form{grid-template-columns:1fr}}
 .top-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}.session-card{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--navy);font-weight:950;box-shadow:0 10px 24px rgba(11,45,77,.08)}.session-card strong{color:var(--red);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase}.session-card a{color:var(--muted);text-decoration:none;font-size:.88rem}.session-card a:hover{color:var(--red)}@media(max-width:900px){.top-actions{width:100%;justify-content:space-between}.session-card{width:100%;justify-content:center}}
 .history-panel{margin-top:18px}.history-limit{padding:7px 11px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.history-list{display:grid;gap:10px}.history-card{display:grid;grid-template-columns:190px minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px;border:1px solid var(--line);border-left:7px solid var(--navy);border-radius:8px;background:linear-gradient(90deg,#f4f7fb,#fff 24%)}.history-card h3{margin:7px 0 0;font-size:1.2rem}.history-link{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--navy);font-weight:900;text-decoration:none}.history-link:hover{border-color:var(--navy);box-shadow:0 10px 24px rgba(11,45,77,.10)}@media(max-width:900px){.history-card{grid-template-columns:1fr}.history-link{width:100%}}
+.room-chip{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 11px;background:#fff7da;color:#705c00;border:1px solid rgba(214,178,14,.35);font-size:.72rem;text-transform:uppercase;font-weight:950;letter-spacing:.04em}
 </style>
 </head>
 <body>
@@ -888,7 +928,7 @@ function renderApp(initialView, sessionUser) {
 <main class="shell">
   <section class="views active" id="homeView">
     <section class="overview-grid" aria-label="Resumen de la sala">
-      <article class="metric-card primary"><span>Estado actual</span><strong id="stateText">Libre</strong><small id="stateSmall">Disponible para la próxima reunión</small></article>
+      <article class="metric-card primary"><span>Estado de las salas</span><strong id="stateText">Libres</strong><small id="stateSmall">Sala Pleno y Sala Orientación disponibles</small></article>
       <article class="metric-card"><span>Reuniones hoy</span><strong id="todayCount">0</strong><small>Programadas desde ahora</small></article>
       <article class="metric-card"><span>Agenda visible</span><strong id="visibleCount">0</strong><small>Reuniones activas o futuras</small></article>
     </section>
@@ -912,6 +952,7 @@ function renderApp(initialView, sessionUser) {
         <div class="field"><label>Enlace</label><input name="url" required placeholder="https://..."></div>
         <div class="field"><label>Fecha</label><input name="date" type="date" required></div>
         <div class="field"><label>Hora</label><input name="time" type="time" required></div>
+        <div class="field"><label>Sala</label><select name="room" required><option value="sala-pleno" selected>Sala Pleno</option><option value="sala-orientacion">Sala Orientación</option></select></div>
         <div class="field"><label>Duración</label><select name="duration"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">120 min</option></select></div>
         <div class="field full"><label>Observaciones</label><textarea name="notes" placeholder="Notas opcionales"></textarea></div>
         <div class="form-actions field full"><button class="btn btn-filled" id="saveMeetingButton" type="submit">Guardar reunión</button></div>
@@ -971,8 +1012,9 @@ async function loadAgenda() {
 
 function renderHome() {
   $('#roomState').classList.toggle('busy', agenda.room_busy);
-  $('#stateText').textContent = agenda.room_busy ? 'En reunión' : 'Libre';
-  $('#stateSmall').textContent = agenda.room_busy ? 'Hay una reunión en curso' : 'Disponible para la próxima reunión';
+  const busyRoomCount = Number(agenda.busy_room_count || 0);
+  $('#stateText').textContent = busyRoomCount ? busyRoomCount + (busyRoomCount === 1 ? ' ocupada' : ' ocupadas') : 'Libres';
+  $('#stateSmall').textContent = busyRoomCount ? (agenda.occupied_room_names || []).join(' y ') + (busyRoomCount === 1 ? ' está ocupada' : ' están ocupadas') : 'Sala Pleno y Sala Orientación disponibles';
   $('#todayCount').textContent = agenda.today_count;
   $('#visibleCount').textContent = agenda.visible_count;
   renderFeatured();
@@ -982,6 +1024,7 @@ function renderHome() {
 
 function chipStatus(meeting) { return '<span class="status-chip ' + meeting.status_class + '">' + escapeHtml(meeting.status) + '</span>'; }
 function chipPlatform(meeting) { return '<span class="platform-chip">' + platformIcon(meeting.platform) + ' ' + escapeHtml(meeting.platform) + '</span>'; }
+function chipRoom(meeting) { return '<span class="room-chip">⌖ ' + escapeHtml(meeting.room_name) + '</span>'; }
 function platformIcon(platform) { return platform === 'Teams' ? '▣' : platform === 'Zoom' ? '◎' : platform === 'Google Meet' ? '◈' : platform === 'Webex' ? '◇' : '●'; }
 
 function renderFeatured() {
@@ -992,7 +1035,7 @@ function renderFeatured() {
     return;
   }
 
-  box.innerHTML = '<section class="hero-panel ' + meeting.status_class + '"><div class="hero-copy"><div class="hero-labels">' + chipStatus(meeting) + chipPlatform(meeting) + '</div><p class="eyebrow">' + (meeting.status_class === 'live' ? 'Reunión en curso' : 'Próxima reunión') + '</p><h2>' + escapeHtml(meeting.title) + '</h2><div class="hero-meta"><span>' + escapeHtml(meeting.date_label) + '</span><span>' + escapeHtml(meeting.time_range) + '</span><span>' + meeting.duration + ' min</span></div>' + (meeting.notes ? '<p class="hero-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="hero-actions single-action"><a class="join-button featured" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a></div></section>';
+  box.innerHTML = '<section class="hero-panel ' + meeting.status_class + '"><div class="hero-copy"><div class="hero-labels">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><p class="eyebrow">' + (meeting.status_class === 'live' ? 'Reunión en curso' : 'Próxima reunión') + '</p><h2>' + escapeHtml(meeting.title) + '</h2><div class="hero-meta"><span>' + escapeHtml(meeting.date_label) + '</span><span>' + escapeHtml(meeting.time_range) + '</span><span>' + meeting.duration + ' min</span></div>' + (meeting.notes ? '<p class="hero-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="hero-actions single-action"><a class="join-button featured" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a></div></section>';
   bindJoinButtons();
 }
 
@@ -1003,7 +1046,7 @@ function renderList() {
     return;
   }
 
-  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions"><a class="join-button" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a><button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
+  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions"><a class="join-button" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a><button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
   bindJoinButtons();
   bindEditButtons();
 }
@@ -1016,7 +1059,7 @@ function renderHistory() {
     return;
   }
 
-  container.innerHTML = '<div class="history-list">' + history.map((meeting) => '<article class="history-card"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div><div class="meeting-badges">' + chipPlatform(meeting) + '<span class="status-chip scheduled">Finalizada</span></div><h3>' + escapeHtml(meeting.title) + '</h3></div>' + (meeting.url ? '<a class="history-link" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer">Abrir enlace ↗</a>' : '<span class="muted">Sin enlace disponible</span>') + '</article>').join('') + '</div>';
+  container.innerHTML = '<div class="history-list">' + history.map((meeting) => '<article class="history-card"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div><div class="meeting-badges">' + chipPlatform(meeting) + chipRoom(meeting) + '<span class="status-chip scheduled">Finalizada</span></div><h3>' + escapeHtml(meeting.title) + '</h3></div>' + (meeting.url ? '<a class="history-link" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer">Abrir enlace ↗</a>' : '<span class="muted">Sin enlace disponible</span>') + '</article>').join('') + '</div>';
 }
 
 function renderManage() {
@@ -1026,7 +1069,7 @@ function renderManage() {
     return;
   }
 
-  list.innerHTML = agenda.meetings.map((meeting) => '<div class="manage-row"><div><strong>' + escapeHtml(meeting.title) + '</strong><p class="muted">' + escapeHtml(meeting.date_label) + ' · ' + escapeHtml(meeting.time_range) + ' · ' + escapeHtml(meeting.platform) + '</p></div><button class="btn btn-danger" data-delete="' + meeting.id + '">Borrar</button></div>').join('');
+  list.innerHTML = agenda.meetings.map((meeting) => '<div class="manage-row"><div><strong>' + escapeHtml(meeting.title) + '</strong><p class="muted">' + escapeHtml(meeting.room_name) + ' · ' + escapeHtml(meeting.date_label) + ' · ' + escapeHtml(meeting.time_range) + ' · ' + escapeHtml(meeting.platform) + '</p></div><button class="btn btn-danger" data-delete="' + meeting.id + '">Borrar</button></div>').join('');
   $$('[data-delete]').forEach((button) => button.addEventListener('click', async () => {
     if (!confirm('¿Borrar esta reunión?')) return;
     const result = await api('/api/meetings/' + button.dataset.delete + '/delete', { method: 'POST' });
@@ -1082,6 +1125,7 @@ function editMeeting(id) {
   form.elements.url.value = meeting.url || '';
   form.elements.date.value = meeting.date || '';
   form.elements.time.value = meeting.time || '';
+  form.elements.room.value = meeting.room || 'sala-pleno';
   form.elements.duration.value = String(meeting.duration || 60);
   form.elements.notes.value = meeting.notes || '';
   $('#formModeEyebrow').textContent = 'Editar reserva';
