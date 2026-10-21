@@ -11,7 +11,10 @@ function createKv(initialEntries = {}) {
     async get(key) {
       return entries.get(key) ?? null;
     },
-    async put(key, value) {
+    async put(key, value, options = {}) {
+      if (options.expirationTtl && options.expirationTtl < 60) {
+        throw new Error("expirationTtl must be at least 60 seconds");
+      }
       entries.set(key, value);
     },
     async delete(key) {
@@ -21,12 +24,22 @@ function createKv(initialEntries = {}) {
 }
 
 function createAuthDb() {
+  const notificationCooldowns = new Set();
   return {
-    prepare() {
+    async exec() {
+      return { count: 0 };
+    },
+    prepare(sql) {
       return {
-        bind() {
+        bind(...values) {
           return {
             async first() {
+              if (sql.includes("meeting_email_cooldowns")) {
+                const scope = String(values[0]);
+                if (notificationCooldowns.has(scope)) return null;
+                notificationCooldowns.add(scope);
+                return { scope };
+              }
               return {
                 display_name: "Usuario de prueba",
                 email: "test@example.test",
@@ -156,6 +169,7 @@ test("la API permite el mismo horario en salas distintas y bloquea solapes por s
       method: "POST",
       headers: {
         cookie,
+        origin: "https://reuniones.example.test",
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
@@ -194,6 +208,7 @@ test("la API permite reuniones presenciales sin enlace y exige enlace para video
       method: "POST",
       headers: {
         cookie,
+        origin: "https://reuniones.example.test",
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
@@ -218,45 +233,284 @@ test("la API permite reuniones presenciales sin enlace y exige enlace para video
   assert.match(videoSinEnlace.message, /enlace/i);
 });
 
-test("una reserva envía un correo con copia oculta y sus detalles", async () => {
-  const sentMessages = [];
+test("rechaza cambios enviados desde un origen distinto al portal", async () => {
   const env = {
     AUTH_SECRET,
-    EMAIL_FROM: "reuniones@example.test",
-    EMAIL: {
-      async send(message) {
-        sentMessages.push(message);
-        return { messageId: "message-1" };
-      },
-    },
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };
   const cookie = await createSessionCookie();
-
   const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
     method: "POST",
     headers: {
       cookie,
+      origin: "https://aplicacion-maliciosa.example.test",
       "content-type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      title: "Reunión notificada",
-      date: "2099-10-22",
-      time: "12:00",
+      title: "Reserva no autorizada",
+      date: "2099-10-21",
+      time: "13:00",
       duration: "60",
-      room: "sala-orientacion",
+      room: "sala-pleno",
       modality: "presencial",
       url: "",
     }),
   }), env);
   const body = await response.json();
 
-  assert.equal(body.ok, true);
-  assert.equal(body.notification.sent, true);
-  assert.equal(body.notification.recipients, 1);
-  assert.equal(sentMessages.length, 1);
-  assert.deepEqual(sentMessages[0].bcc, ["test@example.test"]);
-  assert.match(sentMessages[0].text, /Sala Orientación/);
-  assert.match(sentMessages[0].text, /Modalidad: Presencial/);
+  assert.equal(response.status, 403);
+  assert.equal(body.ok, false);
+  assert.deepEqual(JSON.parse(await env.MEETINGS_KV.get("meetings")), []);
+});
+
+test("una reserva envía un correo con copia oculta mediante Microsoft Graph", async () => {
+  const graphRequests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    graphRequests.push({ url: String(url), options });
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    return new Response(null, { status: 202 });
+  };
+
+  const env = {
+    AUTH_SECRET,
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "https://reuniones.example.test",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        title: "Reunión notificada",
+        date: "2099-10-22",
+        time: "12:00",
+        duration: "60",
+        room: "sala-orientacion",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(body.notification.sent, true);
+    assert.equal(body.notification.recipients, 1);
+    assert.equal(graphRequests.length, 2);
+    assert.match(graphRequests[0].url, /tenant-id\/oauth2\/v2\.0\/token$/);
+    assert.match(String(graphRequests[0].options.body), /grant_type=client_credentials/);
+    assert.match(String(graphRequests[0].options.body), /client_secret=client-secret/);
+    assert.match(graphRequests[1].url, /users\/reuniones%40example\.test\/sendMail$/);
+    assert.equal(graphRequests[1].options.headers.Authorization, "Bearer graph-access-token");
+    const graphMessage = JSON.parse(graphRequests[1].options.body);
+    assert.deepEqual(graphMessage.message.bccRecipients, [{ emailAddress: { address: "test@example.test" } }]);
+    assert.match(graphMessage.message.body.content, /Sala Orientación/);
+    assert.match(graphMessage.message.body.content, /Presencial/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("evita avisos repetidos del mismo usuario durante el periodo de seguridad", async () => {
+  const graphRequests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    graphRequests.push({ url: String(url), options });
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    return new Response(null, { status: 202 });
+  };
+  const env = {
+    AUTH_SECRET,
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  async function reserve(time) {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: `Reserva ${time}`,
+        date: "2099-10-26",
+        time,
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    return response.json();
+  }
+
+  try {
+    const first = await reserve("09:00");
+    const second = await reserve("11:00");
+
+    assert.equal(first.notification.sent, true);
+    assert.equal(second.notification.sent, false);
+    assert.match(second.notification.message, /evitar envíos repetidos/i);
+    assert.equal(graphRequests.filter((request) => request.url.includes("/sendMail")).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Microsoft Graph reintenta un envío limitado temporalmente", async () => {
+  const graphRequests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    graphRequests.push({ url: String(url), options });
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    const sendAttempt = graphRequests.filter((request) => request.url.includes("/sendMail")).length;
+    if (sendAttempt === 1) {
+      return Response.json({ error: { code: "TooManyRequests" } }, {
+        status: 429,
+        headers: { "Retry-After": "0" },
+      });
+    }
+    return new Response(null, { status: 202 });
+  };
+
+  const env = {
+    AUTH_SECRET,
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva con reintento",
+        date: "2099-10-24",
+        time: "09:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.notification.sent, true);
+    assert.equal(graphRequests.filter((request) => request.url.includes("/sendMail")).length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("no solicita tokens si el correo remitente no es válido", async () => {
+  let graphRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    graphRequests += 1;
+    return Response.json({ access_token: "unexpected-token" });
+  };
+  const env = {
+    AUTH_SECRET,
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "correo-no-valido",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva sin remitente válido",
+        date: "2099-10-25",
+        time: "09:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(body.notification.sent, false);
+    assert.equal(graphRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("la reserva permanece guardada si Microsoft Graph rechaza el correo", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    return Response.json({ error: { code: "ErrorAccessDenied" } }, { status: 403 });
+  };
+  const env = {
+    AUTH_SECRET,
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva conservada",
+        date: "2099-10-23",
+        time: "09:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+    const meetings = JSON.parse(await env.MEETINGS_KV.get("meetings"));
+
+    assert.equal(body.ok, true);
+    assert.equal(body.notification.sent, false);
+    assert.match(body.notification.message, /reserva sí quedó guardada/i);
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0].title, "Reserva conservada");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

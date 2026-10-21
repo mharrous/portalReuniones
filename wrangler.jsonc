@@ -4,15 +4,6 @@
   "main": "worker.js",
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
-  "vars": {
-    "EMAIL_FROM": "reuniones@camaradeceuta.es"
-  },
-  "send_email": [
-    {
-      "name": "EMAIL",
-      "allowed_sender_addresses": ["reuniones@camaradeceuta.es"]
-    }
-  ],
   "d1_databases": [
     {
       "binding": "PORTAL_AUTH_DB",

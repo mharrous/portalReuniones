@@ -1,0 +1,5 @@
+AUTH_SECRET=clave-local-de-prueba
+MICROSOFT_TENANT_ID=identificador-del-directorio
+MICROSOFT_CLIENT_ID=identificador-de-la-aplicacion
+MICROSOFT_CLIENT_SECRET=secreto-de-la-aplicacion
+MICROSOFT_SENDER_EMAIL=correo-remitente

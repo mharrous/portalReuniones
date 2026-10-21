@@ -17,6 +17,7 @@ const AUTO_DELETE_AFTER_MINUTES = 60;
 const MEETINGS_KEY = "meetings";
 const HISTORY_KEY = "meeting_history";
 const DOCK_KEY = "dock_state";
+const NOTIFICATION_COOLDOWN_SECONDS = 60;
 const SESSION_COOKIE = "reuniones_session";
 const SESSION_TTL_SECONDS = 180 * 24 * 60 * 60;
 const LOGIN_PATH = "/login";
@@ -90,6 +91,11 @@ export default {
 
       if (!env.MEETINGS_KV) {
         return htmlResponse(renderSetupError(), 503);
+      }
+
+      const isMeetingMutation = request.method === "POST" && /^\/api\/meetings(?:\/|$)/.test(path);
+      if (isMeetingMutation && !isSameOriginRequest(request)) {
+        return jsonResponse({ ok: false, message: "Solicitud no autorizada." }, 403);
       }
 
       if (path === "/api/meetings" && request.method === "GET") {
@@ -763,11 +769,15 @@ export function buildMeetingNotification(meeting, organizerName = "Un compañero
 }
 
 async function sendMeetingNotification(env, meeting, sessionUser, action) {
-  if (!env.EMAIL || !env.PORTAL_AUTH_DB) {
+  const graphConfig = getMicrosoftGraphConfig(env);
+  if (!graphConfig || !env.PORTAL_AUTH_DB) {
     return { sent: false, recipients: 0, message: "El envío de correo todavía no está configurado." };
   }
 
   try {
+    if (!await acquireMeetingNotificationCooldown(env, sessionUser)) {
+      return { sent: false, recipients: 0, message: "El correo se ha omitido para evitar envíos repetidos." };
+    }
     const recipients = await env.PORTAL_AUTH_DB.prepare(`
       SELECT DISTINCT lower(trim(u.email)) AS email
       FROM users u
@@ -776,26 +786,125 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
       WHERE u.active = 1 AND (u.role = 'admin' OR p.active = 1)
         AND u.email IS NOT NULL AND trim(u.email) <> ''
     `).bind(CURRENT_APP_CODE).all();
-    const emails = (recipients.results || []).map((row) => String(row.email || "")).filter(Boolean);
+    const emails = (recipients.results || [])
+      .map((row) => String(row.email || "").trim().toLowerCase())
+      .filter(isValidEmailAddress);
     if (!emails.length) return { sent: false, recipients: 0, message: "No hay destinatarios con correo configurado." };
 
     const message = buildMeetingNotification(meeting, sessionUser?.username, action);
-    const sender = String(env.EMAIL_FROM || "reuniones@camaradeceuta.es");
+    const accessToken = await requestMicrosoftGraphToken(graphConfig);
     const batches = Array.from({ length: Math.ceil(emails.length / 50) }, (_, index) => emails.slice(index * 50, index * 50 + 50));
     for (const batch of batches) {
-      await env.EMAIL.send({
-        bcc: batch,
-        from: { email: sender, name: "Portal de reuniones" },
-        subject: message.subject,
-        html: message.html,
-        text: message.text,
-      });
+      await sendMicrosoftGraphMessage(graphConfig.senderEmail, accessToken, batch, message);
     }
     return { sent: true, recipients: emails.length, message: "Notificación enviada." };
   } catch (error) {
     console.error(JSON.stringify({ event: "meeting_email_failed", meetingId: meeting.id, message: error?.message || String(error) }));
     return { sent: false, recipients: 0, message: "No se pudo enviar el correo de aviso; la reserva sí quedó guardada." };
   }
+}
+
+async function acquireMeetingNotificationCooldown(env, sessionUser) {
+  await env.PORTAL_AUTH_DB.exec(`
+    CREATE TABLE IF NOT EXISTS meeting_email_cooldowns (
+      scope TEXT PRIMARY KEY,
+      expires_at TEXT NOT NULL
+    )
+  `);
+  const userId = String(sessionUser?.centralUserId || "unknown");
+  const lock = await env.PORTAL_AUTH_DB.prepare(`
+    INSERT INTO meeting_email_cooldowns (scope, expires_at)
+    VALUES (?, datetime('now', ?))
+    ON CONFLICT(scope) DO UPDATE SET expires_at = excluded.expires_at
+      WHERE meeting_email_cooldowns.expires_at <= CURRENT_TIMESTAMP
+    RETURNING scope
+  `).bind(`user:${userId}`, `+${NOTIFICATION_COOLDOWN_SECONDS} seconds`).first();
+  return Boolean(lock);
+}
+
+function getMicrosoftGraphConfig(env) {
+  const config = Object.freeze({
+    tenantId: String(env.MICROSOFT_TENANT_ID || "").trim(),
+    clientId: String(env.MICROSOFT_CLIENT_ID || "").trim(),
+    clientSecret: String(env.MICROSOFT_CLIENT_SECRET || "").trim(),
+    senderEmail: String(env.MICROSOFT_SENDER_EMAIL || "").trim().toLowerCase(),
+  });
+  return Object.values(config).every(Boolean) && isValidEmailAddress(config.senderEmail) ? config : null;
+}
+
+async function requestMicrosoftGraphToken(config) {
+  const body = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    scope: "https://graph.microsoft.com/.default",
+    grant_type: "client_credentials",
+  });
+  const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(config.tenantId)}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+    signal: AbortSignal.timeout(10000),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.access_token) {
+    const code = String(result.error || `HTTP_${response.status}`);
+    throw new Error(`Microsoft Graph no pudo autenticar la aplicación (${code}).`);
+  }
+  return String(result.access_token);
+}
+
+async function sendMicrosoftGraphMessage(senderEmail, accessToken, recipients, message) {
+  const request = Object.freeze({
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      message: {
+        subject: message.subject,
+        body: { contentType: "HTML", content: message.html },
+        bccRecipients: recipients.map((address) => ({ emailAddress: { address } })),
+      },
+      saveToSentItems: true,
+    }),
+  });
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(senderEmail)}/sendMail`, {
+      ...request,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (response.ok) return;
+
+    const shouldRetry = response.status === 429 || response.status >= 500;
+    if (shouldRetry && attempt < 2) {
+      await delay(getGraphRetryDelay(response.headers.get("retry-after"), attempt));
+      continue;
+    }
+
+    const result = await response.json().catch(() => ({}));
+    const code = String(result?.error?.code || `HTTP_${response.status}`);
+    throw new Error(`Microsoft Graph rechazó el correo (${code}).`);
+  }
+}
+
+function getGraphRetryDelay(retryAfter, attempt) {
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 5000);
+
+  const retryDate = Date.parse(String(retryAfter || ""));
+  if (Number.isFinite(retryDate)) return Math.min(Math.max(0, retryDate - Date.now()), 5000);
+
+  return Math.min(250 * (2 ** attempt), 2000);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isValidEmailAddress(value) {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function meetingStatus(meeting) {
@@ -848,6 +957,16 @@ async function readRequestData(request) {
 
   const form = await request.formData();
   return Object.fromEntries(form.entries());
+}
+
+function isSameOriginRequest(request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
 }
 
 function clean(value) {

@@ -36,7 +36,18 @@ Cada reserva puede marcarse como `Presencial` o `Videoconferencia`. Las reunione
 
 Al crear o editar una reserva, el Worker envía un correo con copia oculta y los detalles a todos los usuarios activos que tienen acceso a Reuniones. Las direcciones no se comparten entre destinatarios.
 
-El envío utiliza el binding `EMAIL` de Cloudflare Email Service y la dirección `reuniones@camaradeceuta.es`. El dominio `camaradeceuta.es` debe estar habilitado para Email Sending en la cuenta de Cloudflare.
+El envío utiliza Microsoft Graph con autenticación de aplicación. En Microsoft 365 debe asignarse `Application Mail.Send` mediante Exchange Online Application RBAC y limitarse exclusivamente al buzón remitente. No debe concederse un permiso `Mail.Send` global sin restricciones.
+
+Configura estos cuatro valores como secretos de Cloudflare; no los añadas al repositorio:
+
+```powershell
+npx wrangler secret put MICROSOFT_TENANT_ID
+npx wrangler secret put MICROSOFT_CLIENT_ID
+npx wrangler secret put MICROSOFT_CLIENT_SECRET
+npx wrangler secret put MICROSOFT_SENDER_EMAIL
+```
+
+`MICROSOFT_SENDER_EMAIL` debe ser el buzón corporativo desde el que se enviarán los avisos. El secreto de cliente se copia una sola vez al crearlo en Microsoft Entra.
 
 ## Despliegue manual seguro
 
