@@ -34,6 +34,9 @@ function createAuthDb() {
                 application_role: "user",
               };
             },
+            async all() {
+              return { results: [{ email: "test@example.test" }] };
+            },
           };
         },
       };
@@ -122,6 +125,24 @@ test("la agenda autenticada devuelve cinco reuniones como máximo y sin notas", 
   assert.equal("notes" in body.history[0], false);
 });
 
+test("el formulario autenticado muestra las dos modalidades", async () => {
+  const env = {
+    AUTH_SECRET,
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+  const response = await worker.fetch(new Request("https://reuniones.example.test/add.php", {
+    headers: { cookie },
+  }), env);
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /name="modality"/);
+  assert.match(html, /value="presencial"/);
+  assert.match(html, /value="videoconferencia"/);
+});
+
 test("la API permite el mismo horario en salas distintas y bloquea solapes por sala", async () => {
   const env = {
     AUTH_SECRET,
@@ -158,4 +179,84 @@ test("la API permite el mismo horario en salas distintas y bloquea solapes por s
   assert.equal(orientacion.ok, true);
   assert.equal(plenoDuplicado.ok, false);
   assert.match(plenoDuplicado.message, /Sala Pleno ya está ocupada/);
+});
+
+test("la API permite reuniones presenciales sin enlace y exige enlace para videoconferencias", async () => {
+  const env = {
+    AUTH_SECRET,
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  async function createMeeting(modality, url, time) {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        title: "Reserva de prueba",
+        date: "2099-10-21",
+        time,
+        duration: "60",
+        room: "sala-pleno",
+        modality,
+        url,
+      }),
+    }), env);
+
+    return response.json();
+  }
+
+  const presencial = await createMeeting("presencial", "", "09:00");
+  const videoSinEnlace = await createMeeting("videoconferencia", "", "11:00");
+
+  assert.equal(presencial.ok, true);
+  assert.equal(videoSinEnlace.ok, false);
+  assert.match(videoSinEnlace.message, /enlace/i);
+});
+
+test("una reserva envía un correo con copia oculta y sus detalles", async () => {
+  const sentMessages = [];
+  const env = {
+    AUTH_SECRET,
+    EMAIL_FROM: "reuniones@example.test",
+    EMAIL: {
+      async send(message) {
+        sentMessages.push(message);
+        return { messageId: "message-1" };
+      },
+    },
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+    method: "POST",
+    headers: {
+      cookie,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      title: "Reunión notificada",
+      date: "2099-10-22",
+      time: "12:00",
+      duration: "60",
+      room: "sala-orientacion",
+      modality: "presencial",
+      url: "",
+    }),
+  }), env);
+  const body = await response.json();
+
+  assert.equal(body.ok, true);
+  assert.equal(body.notification.sent, true);
+  assert.equal(body.notification.recipients, 1);
+  assert.equal(sentMessages.length, 1);
+  assert.deepEqual(sentMessages[0].bcc, ["test@example.test"]);
+  assert.match(sentMessages[0].text, /Sala Orientación/);
+  assert.match(sentMessages[0].text, /Modalidad: Presencial/);
 });

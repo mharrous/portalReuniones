@@ -8,6 +8,11 @@ const MEETING_ROOMS = Object.freeze([
 ]);
 const TZ = "Europe/Madrid";
 const DEFAULT_DURATION = 60;
+const DEFAULT_MODALITY = "videoconferencia";
+const MEETING_MODALITIES = Object.freeze([
+  { id: "presencial", name: "Presencial" },
+  { id: "videoconferencia", name: "Videoconferencia" },
+]);
 const AUTO_DELETE_AFTER_MINUTES = 60;
 const MEETINGS_KEY = "meetings";
 const HISTORY_KEY = "meeting_history";
@@ -92,12 +97,12 @@ export default {
       }
 
       if (path === "/api/meetings" && request.method === "POST") {
-        return jsonResponse(await createMeeting(request, env));
+        return jsonResponse(await createMeeting(request, env, sessionUser));
       }
 
       const meetingUpdate = path.match(/^\/api\/meetings\/([^/]+)\/update$/);
       if (meetingUpdate && request.method === "POST") {
-        return jsonResponse(await updateMeeting(request, env, meetingUpdate[1]));
+        return jsonResponse(await updateMeeting(request, env, meetingUpdate[1], sessionUser));
       }
 
       const meetingAction = path.match(/^\/api\/meetings\/([^/]+)\/(finish|extend|delete)$/);
@@ -326,6 +331,7 @@ async function archiveMeetings(env, meetings) {
     url: meeting.url,
     duration: meeting.duration,
     room: meetingRoomId(meeting),
+    modality: meetingModality(meeting),
     completed_at: meeting.ended_at || meetingEnd(meeting).toISOString(),
   }));
   const history = mergeRecentMeetingHistory(await loadMeetingHistory(env), completedMeetings);
@@ -366,7 +372,7 @@ function shouldAutoDeleteMeeting(meeting, now = new Date()) {
   return Number.isFinite(deleteAt) && deleteAt < now.getTime();
 }
 
-async function createMeeting(request, env) {
+async function createMeeting(request, env, sessionUser) {
   const data = await readRequestData(request);
   const title = clean(data.title || "");
   const date = clean(data.date || "");
@@ -374,13 +380,18 @@ async function createMeeting(request, env) {
   const url = clean(data.url || "");
   const notes = clean(data.notes || "");
   const room = requestedRoomId(data.room || "");
+  const modality = requestedMeetingModality(data.modality || "") || (url ? DEFAULT_MODALITY : "presencial");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
 
-  if (!date || !time || !url || !room) {
-    return { ok: false, message: "Completa sala, fecha, hora y enlace." };
+  if (!date || !time || !room || !modality) {
+    return { ok: false, message: "Completa modalidad, sala, fecha y hora." };
   }
 
-  if (!url.startsWith("https://")) {
+  if (modality === "videoconferencia" && !url) {
+    return { ok: false, message: "Añade el enlace de la videoconferencia." };
+  }
+
+  if (url && !url.startsWith("https://")) {
     return { ok: false, message: "El enlace debe empezar por https://" };
   }
 
@@ -395,23 +406,32 @@ async function createMeeting(request, env) {
     };
   }
 
-  meetings.push({
+  const meeting = {
     id: crypto.randomUUID(),
-    title: title || `Reunión de ${detectPlatform(url)}`,
+    title: title || (modality === "presencial" ? "Reunión presencial" : `Reunión de ${detectPlatform(url)}`),
     date,
     time,
     url,
     notes,
     duration,
     room,
+    modality,
     created_at: new Date().toISOString(),
-  });
+  };
+  meetings.push(meeting);
 
   await saveMeetings(env, meetings);
-  return { ok: true, message: "Reunión añadida." };
+  const notification = await sendMeetingNotification(env, meeting, sessionUser, "created");
+  return {
+    ok: true,
+    notification,
+    message: notification.sent
+      ? `Reunión añadida y correo enviado a ${notification.recipients} personas.`
+      : `Reunión añadida. ${notification.message}`,
+  };
 }
 
-async function updateMeeting(request, env, id) {
+async function updateMeeting(request, env, id, sessionUser) {
   const data = await readRequestData(request);
   const title = clean(data.title || "");
   const date = clean(data.date || "");
@@ -419,13 +439,18 @@ async function updateMeeting(request, env, id) {
   const url = clean(data.url || "");
   const notes = clean(data.notes || "");
   const room = requestedRoomId(data.room || "");
+  const modality = requestedMeetingModality(data.modality || "") || (url ? DEFAULT_MODALITY : "presencial");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
 
-  if (!date || !time || !url || !room) {
-    return { ok: false, message: "Completa sala, fecha, hora y enlace." };
+  if (!date || !time || !room || !modality) {
+    return { ok: false, message: "Completa modalidad, sala, fecha y hora." };
   }
 
-  if (!url.startsWith("https://")) {
+  if (modality === "videoconferencia" && !url) {
+    return { ok: false, message: "Añade el enlace de la videoconferencia." };
+  }
+
+  if (url && !url.startsWith("https://")) {
     return { ok: false, message: "El enlace debe empezar por https://" };
   }
 
@@ -443,18 +468,26 @@ async function updateMeeting(request, env, id) {
     };
   }
 
-  meeting.title = title || `Reunión de ${detectPlatform(url)}`;
+  meeting.title = title || (modality === "presencial" ? "Reunión presencial" : `Reunión de ${detectPlatform(url)}`);
   meeting.date = date;
   meeting.time = time;
   meeting.url = url;
   meeting.notes = notes;
   meeting.duration = duration;
   meeting.room = room;
+  meeting.modality = modality;
   meeting.updated_at = new Date().toISOString();
   delete meeting.ended_at;
 
   await saveMeetings(env, meetings);
-  return { ok: true, message: "Reunión actualizada." };
+  const notification = await sendMeetingNotification(env, meeting, sessionUser, "updated");
+  return {
+    ok: true,
+    notification,
+    message: notification.sent
+      ? `Reunión actualizada y correo enviado a ${notification.recipients} personas.`
+      : `Reunión actualizada. ${notification.message}`,
+  };
 }
 
 async function updateMeetingAction(env, id, action) {
@@ -481,6 +514,20 @@ export function meetingRoomId(meeting) {
 function meetingRoomName(meeting) {
   const roomId = meetingRoomId(meeting);
   return MEETING_ROOMS.find((room) => room.id === roomId)?.name || MEETING_ROOMS[0].name;
+}
+
+function requestedMeetingModality(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return MEETING_MODALITIES.some((modality) => modality.id === normalized) ? normalized : "";
+}
+
+export function meetingModality(meeting) {
+  return requestedMeetingModality(meeting?.modality) || (meeting?.url ? DEFAULT_MODALITY : "presencial");
+}
+
+function meetingModalityName(meeting) {
+  const modalityId = meetingModality(meeting);
+  return MEETING_MODALITIES.find((modality) => modality.id === modalityId)?.name || MEETING_MODALITIES[0].name;
 }
 
 export function findMeetingConflict(meetings, candidate, excludedId = "") {
@@ -627,6 +674,8 @@ function historyMeetingPayload(meeting) {
     title: enriched.title || "Reunión sin título",
     url,
     platform: enriched.platform,
+    modality: enriched.modality,
+    modality_name: enriched.modality_name,
     room: enriched.room,
     room_name: enriched.room_name,
     date_label: enriched.date_label,
@@ -653,7 +702,9 @@ function enrichMeeting(meeting) {
     ...meeting,
     room: meetingRoomId(meeting),
     room_name: meetingRoomName(meeting),
-    platform: detectPlatform(meeting.url || ""),
+    modality: meetingModality(meeting),
+    modality_name: meetingModalityName(meeting),
+    platform: meetingModality(meeting) === "presencial" ? "Presencial" : detectPlatform(meeting.url || ""),
     status: status.label,
     status_class: status.class,
     date_label: formatMeetingDate(start),
@@ -669,6 +720,8 @@ function meetingApiPayload(meeting) {
     has_meeting: true,
     room_name: meeting.room_name || meetingRoomName(meeting),
     room: meeting.room || meetingRoomId(meeting),
+    modality: meeting.modality || meetingModality(meeting),
+    modality_name: meeting.modality_name || meetingModalityName(meeting),
     id: meeting.id || "",
     title: meeting.title || "Reunión sin título",
     platform: meeting.platform || detectPlatform(meeting.url || ""),
@@ -678,6 +731,71 @@ function meetingApiPayload(meeting) {
     time_range: meeting.time_range || `${formatClock(meetingStart(meeting))} - ${formatClock(meetingEnd(meeting))}`,
     duration: meetingDuration(meeting),
   };
+}
+
+export function buildMeetingNotification(meeting, organizerName = "Un compañero", action = "created") {
+  const enriched = enrichMeeting(meeting);
+  const actionLabel = action === "updated" ? "Reserva actualizada" : "Nueva reserva de sala";
+  const details = [
+    `Título: ${enriched.title || "Reunión sin título"}`,
+    `Sala: ${enriched.room_name}`,
+    `Modalidad: ${enriched.modality_name}`,
+    `Fecha: ${enriched.date_label}`,
+    `Hora: ${enriched.time_range}`,
+    `Duración: ${enriched.duration} minutos`,
+    `Reservada por: ${organizerName || "Un compañero"}`,
+  ];
+  if (enriched.notes) details.push(`Observaciones: ${enriched.notes}`);
+  if (enriched.modality === "videoconferencia" && enriched.url) details.push(`Enlace: ${enriched.url}`);
+
+  const linkHtml = enriched.modality === "videoconferencia" && enriched.url
+    ? `<p style="margin:24px 0"><a href="${escapeHtml(enriched.url)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#e11d2f;color:#fff;text-decoration:none;font-weight:700">Unirse a la reunión</a></p>`
+    : "";
+  const notesHtml = enriched.notes
+    ? `<tr><td style="padding:8px 12px;color:#667085">Observaciones</td><td style="padding:8px 12px;font-weight:600">${escapeHtml(enriched.notes)}</td></tr>`
+    : "";
+
+  return {
+    subject: `${actionLabel}: ${enriched.title || "Reunión sin título"}`,
+    text: `${actionLabel}\n\n${details.join("\n")}\n\nPortal de reuniones · Cámara de Comercio de Ceuta`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#111827"><div style="border-top:6px solid #e11d2f;padding:24px;border-radius:12px;background:#fff;box-shadow:0 10px 30px #00000014"><p style="margin:0;color:#e11d2f;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em">${escapeHtml(actionLabel)}</p><h1 style="margin:8px 0 20px;color:#0b2d4d;font-size:26px">${escapeHtml(enriched.title || "Reunión sin título")}</h1><table style="width:100%;border-collapse:collapse"><tr><td style="padding:8px 12px;color:#667085">Sala</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.room_name)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Modalidad</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.modality_name)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Fecha</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.date_label)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Hora</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.time_range)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Duración</td><td style="padding:8px 12px;font-weight:700">${enriched.duration} minutos</td></tr><tr><td style="padding:8px 12px;color:#667085">Reservada por</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(organizerName || "Un compañero")}</td></tr>${notesHtml}</table>${linkHtml}<p style="margin:24px 0 0;color:#667085;font-size:13px">Portal de reuniones · Cámara de Comercio de Ceuta</p></div></div>`,
+  };
+}
+
+async function sendMeetingNotification(env, meeting, sessionUser, action) {
+  if (!env.EMAIL || !env.PORTAL_AUTH_DB) {
+    return { sent: false, recipients: 0, message: "El envío de correo todavía no está configurado." };
+  }
+
+  try {
+    const recipients = await env.PORTAL_AUTH_DB.prepare(`
+      SELECT DISTINCT lower(trim(u.email)) AS email
+      FROM users u
+      LEFT JOIN user_application_permissions p
+        ON p.user_id = u.id AND p.application_code = ?
+      WHERE u.active = 1 AND (u.role = 'admin' OR p.active = 1)
+        AND u.email IS NOT NULL AND trim(u.email) <> ''
+    `).bind(CURRENT_APP_CODE).all();
+    const emails = (recipients.results || []).map((row) => String(row.email || "")).filter(Boolean);
+    if (!emails.length) return { sent: false, recipients: 0, message: "No hay destinatarios con correo configurado." };
+
+    const message = buildMeetingNotification(meeting, sessionUser?.username, action);
+    const sender = String(env.EMAIL_FROM || "reuniones@camaradeceuta.es");
+    const batches = Array.from({ length: Math.ceil(emails.length / 50) }, (_, index) => emails.slice(index * 50, index * 50 + 50));
+    for (const batch of batches) {
+      await env.EMAIL.send({
+        bcc: batch,
+        from: { email: sender, name: "Portal de reuniones" },
+        subject: message.subject,
+        html: message.html,
+        text: message.text,
+      });
+    }
+    return { sent: true, recipients: emails.length, message: "Notificación enviada." };
+  } catch (error) {
+    console.error(JSON.stringify({ event: "meeting_email_failed", meetingId: meeting.id, message: error?.message || String(error) }));
+    return { sent: false, recipients: 0, message: "No se pudo enviar el correo de aviso; la reserva sí quedó guardada." };
+  }
 }
 
 function meetingStatus(meeting) {
@@ -911,6 +1029,7 @@ function renderApp(initialView, sessionUser) {
 .top-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}.session-card{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--navy);font-weight:950;box-shadow:0 10px 24px rgba(11,45,77,.08)}.session-card strong{color:var(--red);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase}.session-card a{color:var(--muted);text-decoration:none;font-size:.88rem}.session-card a:hover{color:var(--red)}@media(max-width:900px){.top-actions{width:100%;justify-content:space-between}.session-card{width:100%;justify-content:center}}
 .history-panel{margin-top:18px}.history-limit{padding:7px 11px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.history-list{display:grid;gap:10px}.history-card{display:grid;grid-template-columns:190px minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px;border:1px solid var(--line);border-left:7px solid var(--navy);border-radius:8px;background:linear-gradient(90deg,#f4f7fb,#fff 24%)}.history-card h3{margin:7px 0 0;font-size:1.2rem}.history-link{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--navy);font-weight:900;text-decoration:none}.history-link:hover{border-color:var(--navy);box-shadow:0 10px 24px rgba(11,45,77,.10)}@media(max-width:900px){.history-card{grid-template-columns:1fr}.history-link{width:100%}}
 .room-chip{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 11px;background:#fff7da;color:#705c00;border:1px solid rgba(214,178,14,.35);font-size:.72rem;text-transform:uppercase;font-weight:950;letter-spacing:.04em}
+.onsite-action{display:flex;align-items:center;justify-content:center;min-height:92px;padding:20px;border-radius:16px;background:#eef4ff;color:var(--navy);font-size:1rem;font-weight:950;text-align:center}.field.is-optional label::after{content:" · opcional";color:var(--muted);font-size:.78rem;font-weight:700}.field.is-required label::after{content:" · obligatorio";color:var(--red);font-size:.78rem;font-weight:800}
 </style>
 </head>
 <body>
@@ -949,7 +1068,8 @@ function renderApp(initialView, sessionUser) {
       <form id="addForm" class="form-grid">
         <div class="field full"><label>Pegar invitación o enlace</label><textarea class="quick-paste" name="invite_text" placeholder="Pega aquí una invitación completa de Teams, Zoom, Google Meet, Webex o solo el enlace."></textarea><span class="field-help">Opcional. El portal intentará rellenar título y enlace automáticamente.</span></div>
         <div class="field"><label>Título</label><input name="title" maxlength="120" placeholder="Se puede autocompletar"></div>
-        <div class="field"><label>Enlace</label><input name="url" required placeholder="https://..."></div>
+        <div class="field"><label>Modalidad</label><select name="modality" required><option value="presencial">Presencial</option><option value="videoconferencia" selected>Videoconferencia</option></select></div>
+        <div class="field full is-required" id="meetingUrlField"><label>Enlace de la reunión</label><input name="url" required placeholder="https://..."><span class="field-help" id="meetingUrlHelp">Obligatorio para videoconferencias.</span></div>
         <div class="field"><label>Fecha</label><input name="date" type="date" required></div>
         <div class="field"><label>Hora</label><input name="time" type="time" required></div>
         <div class="field"><label>Sala</label><select name="room" required><option value="sala-pleno" selected>Sala Pleno</option><option value="sala-orientacion">Sala Orientación</option></select></div>
@@ -1026,6 +1146,12 @@ function chipStatus(meeting) { return '<span class="status-chip ' + meeting.stat
 function chipPlatform(meeting) { return '<span class="platform-chip">' + platformIcon(meeting.platform) + ' ' + escapeHtml(meeting.platform) + '</span>'; }
 function chipRoom(meeting) { return '<span class="room-chip">⌖ ' + escapeHtml(meeting.room_name) + '</span>'; }
 function platformIcon(platform) { return platform === 'Teams' ? '▣' : platform === 'Zoom' ? '◎' : platform === 'Google Meet' ? '◈' : platform === 'Webex' ? '◇' : '●'; }
+function meetingJoinAction(meeting, featured) {
+  if (meeting.modality !== 'videoconferencia' || !meeting.url) {
+    return featured ? '<span class="onsite-action">Reunión presencial<br>sin enlace de acceso</span>' : '';
+  }
+  return '<a class="join-button' + (featured ? ' featured' : '') + '" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a>';
+}
 
 function renderFeatured() {
   const box = $('#featuredContainer');
@@ -1035,7 +1161,7 @@ function renderFeatured() {
     return;
   }
 
-  box.innerHTML = '<section class="hero-panel ' + meeting.status_class + '"><div class="hero-copy"><div class="hero-labels">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><p class="eyebrow">' + (meeting.status_class === 'live' ? 'Reunión en curso' : 'Próxima reunión') + '</p><h2>' + escapeHtml(meeting.title) + '</h2><div class="hero-meta"><span>' + escapeHtml(meeting.date_label) + '</span><span>' + escapeHtml(meeting.time_range) + '</span><span>' + meeting.duration + ' min</span></div>' + (meeting.notes ? '<p class="hero-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="hero-actions single-action"><a class="join-button featured" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a></div></section>';
+  box.innerHTML = '<section class="hero-panel ' + meeting.status_class + '"><div class="hero-copy"><div class="hero-labels">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><p class="eyebrow">' + (meeting.status_class === 'live' ? 'Reunión en curso' : 'Próxima reunión') + '</p><h2>' + escapeHtml(meeting.title) + '</h2><div class="hero-meta"><span>' + escapeHtml(meeting.date_label) + '</span><span>' + escapeHtml(meeting.time_range) + '</span><span>' + meeting.duration + ' min</span></div>' + (meeting.notes ? '<p class="hero-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="hero-actions single-action">' + meetingJoinAction(meeting, true) + '</div></section>';
   bindJoinButtons();
 }
 
@@ -1046,7 +1172,7 @@ function renderList() {
     return;
   }
 
-  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions"><a class="join-button" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a><button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
+  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions">' + meetingJoinAction(meeting, false) + '<button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
   bindJoinButtons();
   bindEditButtons();
 }
@@ -1105,6 +1231,7 @@ function resetAddForm() {
   const form = $('#addForm');
   if (!form) return;
   form.reset();
+  updateModalityFields();
   editingMeetingId = null;
   $('#formModeEyebrow').textContent = 'Nueva reserva';
   $('#formModeTitle').textContent = 'Añadir reunión';
@@ -1126,8 +1253,10 @@ function editMeeting(id) {
   form.elements.date.value = meeting.date || '';
   form.elements.time.value = meeting.time || '';
   form.elements.room.value = meeting.room || 'sala-pleno';
+  form.elements.modality.value = meeting.modality || (meeting.url ? 'videoconferencia' : 'presencial');
   form.elements.duration.value = String(meeting.duration || 60);
   form.elements.notes.value = meeting.notes || '';
+  updateModalityFields();
   $('#formModeEyebrow').textContent = 'Editar reserva';
   $('#formModeTitle').textContent = 'Editar reunión';
   $('#saveMeetingButton').textContent = 'Guardar cambios';
@@ -1193,6 +1322,8 @@ function fillMeetingFormFromText(text) {
 
   if (urlMatch && (urlInput.value.trim() === '' || text === urlInput.value)) {
     urlInput.value = urlMatch[0].replace(/[),.;]+$/, '');
+    $('#addForm [name="modality"]').value = 'videoconferencia';
+    updateModalityFields();
   }
 
   if (titleInput.value.trim() === '') {
@@ -1201,10 +1332,29 @@ function fillMeetingFormFromText(text) {
   }
 }
 
+function updateModalityFields() {
+  const form = $('#addForm');
+  if (!form) return;
+  const isVideo = form.elements.modality.value === 'videoconferencia';
+  const urlField = $('#meetingUrlField');
+  form.elements.url.required = isVideo;
+  urlField.classList.toggle('is-required', isVideo);
+  urlField.classList.toggle('is-optional', !isVideo);
+  $('#meetingUrlHelp').textContent = isVideo ? 'Obligatorio para videoconferencias.' : 'Opcional para reuniones presenciales.';
+}
+
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
 $('#addForm [name="invite_text"]').addEventListener('input', (event) => fillMeetingFormFromText(event.currentTarget.value));
+$('#addForm [name="modality"]').addEventListener('change', (event) => {
+  if (event.currentTarget.value === 'presencial') $('#addForm [name="url"]').value = '';
+  updateModalityFields();
+});
 $('#addForm [name="url"]').addEventListener('input', (event) => {
   const titleInput = $('#addForm [name="title"]');
+  if (event.currentTarget.value.startsWith('https://')) {
+    $('#addForm [name="modality"]').value = 'videoconferencia';
+    updateModalityFields();
+  }
   if (titleInput.value.trim() === '' && event.currentTarget.value.startsWith('https://')) {
     titleInput.value = 'Reunión de ' + platformFromUrl(event.currentTarget.value);
   }
@@ -1227,6 +1377,7 @@ setInterval(tick, 1000);
 loadAgenda();
 setInterval(loadAgenda, 30000);
 setView(window.APP_INITIAL_VIEW || 'home');
+updateModalityFields();
 </script>
 </body>
 </html>`;

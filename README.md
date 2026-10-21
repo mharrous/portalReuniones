@@ -30,6 +30,14 @@ Al crear o editar una reunión se selecciona `Sala Pleno` o `Sala Orientación`.
 Los conflictos de horario se validan por sala, por lo que ambas salas pueden reservarse a la misma hora.
 Las reuniones antiguas que no tengan sala asignada se muestran como `Sala Pleno`.
 
+## Modalidad y avisos por correo
+
+Cada reserva puede marcarse como `Presencial` o `Videoconferencia`. Las reuniones presenciales no necesitan enlace; las videoconferencias requieren una URL `https://`.
+
+Al crear o editar una reserva, el Worker envía un correo con copia oculta y los detalles a todos los usuarios activos que tienen acceso a Reuniones. Las direcciones no se comparten entre destinatarios.
+
+El envío utiliza el binding `EMAIL` de Cloudflare Email Service y la dirección `reuniones@camaradeceuta.es`. El dominio `camaradeceuta.es` debe estar habilitado para Email Sending en la cuenta de Cloudflare.
+
 ## Despliegue manual seguro
 
 Para actualizar el Worker sin tocar la configuraci?n KV:
