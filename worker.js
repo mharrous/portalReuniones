@@ -805,12 +805,12 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
 }
 
 async function acquireMeetingNotificationCooldown(env, sessionUser) {
-  await env.PORTAL_AUTH_DB.exec(`
+  await env.PORTAL_AUTH_DB.prepare(`
     CREATE TABLE IF NOT EXISTS meeting_email_cooldowns (
       scope TEXT PRIMARY KEY,
       expires_at TEXT NOT NULL
     )
-  `);
+  `).run();
   const userId = String(sessionUser?.centralUserId || "unknown");
   const lock = await env.PORTAL_AUTH_DB.prepare(`
     INSERT INTO meeting_email_cooldowns (scope, expires_at)

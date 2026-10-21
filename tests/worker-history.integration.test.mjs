@@ -26,13 +26,22 @@ function createKv(initialEntries = {}) {
 function createAuthDb() {
   const notificationCooldowns = new Set();
   return {
-    async exec() {
+    async exec(sql) {
+      if (String(sql).includes("CREATE TABLE")) {
+        throw new Error("D1_EXEC_ERROR: incomplete input");
+      }
       return { count: 0 };
     },
     prepare(sql) {
       return {
+        async run() {
+          return { success: true };
+        },
         bind(...values) {
           return {
+            async run() {
+              return { success: true };
+            },
             async first() {
               if (sql.includes("meeting_email_cooldowns")) {
                 const scope = String(values[0]);
