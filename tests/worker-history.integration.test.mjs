@@ -290,6 +290,7 @@ test("una reserva envía un correo con copia oculta mediante Microsoft Graph", a
     MICROSOFT_CLIENT_ID: "client-id",
     MICROSOFT_CLIENT_SECRET: "client-secret",
     MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };
@@ -325,7 +326,8 @@ test("una reserva envía un correo con copia oculta mediante Microsoft Graph", a
     assert.match(graphRequests[1].url, /users\/reuniones%40example\.test\/sendMail$/);
     assert.equal(graphRequests[1].options.headers.Authorization, "Bearer graph-access-token");
     const graphMessage = JSON.parse(graphRequests[1].options.body);
-    assert.deepEqual(graphMessage.message.bccRecipients, [{ emailAddress: { address: "test@example.test" } }]);
+    assert.deepEqual(graphMessage.message.bccRecipients, [{ emailAddress: { address: "trabajadores_camara@example.test" } }]);
+    assert.match(body.message, /grupo Trabajadores Cámara/i);
     assert.match(graphMessage.message.body.content, /Sala Orientación/);
     assert.match(graphMessage.message.body.content, /Presencial/);
   } finally {
@@ -349,6 +351,7 @@ test("evita avisos repetidos del mismo usuario durante el periodo de seguridad",
     MICROSOFT_CLIENT_ID: "client-id",
     MICROSOFT_CLIENT_SECRET: "client-secret",
     MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };
@@ -408,6 +411,7 @@ test("Microsoft Graph reintenta un envío limitado temporalmente", async () => {
     MICROSOFT_CLIENT_ID: "client-id",
     MICROSOFT_CLIENT_SECRET: "client-secret",
     MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };
@@ -449,6 +453,7 @@ test("no solicita tokens si el correo remitente no es válido", async () => {
     MICROSOFT_CLIENT_ID: "client-id",
     MICROSOFT_CLIENT_SECRET: "client-secret",
     MICROSOFT_SENDER_EMAIL: "correo-no-valido",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };
@@ -492,6 +497,7 @@ test("la reserva permanece guardada si Microsoft Graph rechaza el correo", async
     MICROSOFT_CLIENT_ID: "client-id",
     MICROSOFT_CLIENT_SECRET: "client-secret",
     MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
     PORTAL_AUTH_DB: createAuthDb(),
     MEETINGS_KV: createKv({ meetings: "[]" }),
   };

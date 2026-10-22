@@ -45,9 +45,10 @@ npx wrangler secret put MICROSOFT_TENANT_ID
 npx wrangler secret put MICROSOFT_CLIENT_ID
 npx wrangler secret put MICROSOFT_CLIENT_SECRET
 npx wrangler secret put MICROSOFT_SENDER_EMAIL
+npx wrangler secret put MICROSOFT_RECIPIENT_EMAIL
 ```
 
-`MICROSOFT_SENDER_EMAIL` debe ser el buzón corporativo desde el que se enviarán los avisos. El secreto de cliente se copia una sola vez al crearlo en Microsoft Entra.
+`MICROSOFT_SENDER_EMAIL` debe ser el buzón corporativo desde el que se enviarán los avisos. `MICROSOFT_RECIPIENT_EMAIL` debe contener el correo del grupo corporativo que recibirá las notificaciones. El secreto de cliente se copia una sola vez al crearlo en Microsoft Entra.
 
 ## Despliegue manual seguro
 

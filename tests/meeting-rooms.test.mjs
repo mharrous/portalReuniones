@@ -53,6 +53,27 @@ test("genera un correo con todos los detalles de la reserva", () => {
   assert.match(notification.text, /https:\/\/teams\.microsoft\.com\/example/);
 });
 
+test("usa la plantilla ejecutiva y escapa el contenido dinámico", () => {
+  const notification = buildMeetingNotification({
+    ...baseMeeting,
+    title: "Comité & seguimiento",
+    room: "sala-pleno",
+    modality: "videoconferencia",
+    url: "https://teams.microsoft.com/example?a=1&b=2",
+    notes: "Revisar <img src=x onerror=alert(1)>",
+  }, "Mustafa <Admin>", "created");
+
+  assert.match(notification.html, /data-template="executive-split"/);
+  assert.match(notification.html, />20<\/span>/);
+  assert.match(notification.html, />OCT<\/span>/);
+  assert.match(notification.html, /Cámara de Comercio<br>de Ceuta/);
+  assert.match(notification.html, /Comité &amp; seguimiento/);
+  assert.match(notification.html, /Mustafa &lt;Admin&gt;/);
+  assert.match(notification.html, /Revisar &lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(notification.html, /https:\/\/teams\.microsoft\.com\/example\?a=1&amp;b=2/);
+  assert.doesNotMatch(notification.html, /<img src=x/);
+});
+
 test("el correo presencial no incluye botón para unirse", () => {
   const notification = buildMeetingNotification({
     ...baseMeeting,

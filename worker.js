@@ -431,9 +431,7 @@ async function createMeeting(request, env, sessionUser) {
   return {
     ok: true,
     notification,
-    message: notification.sent
-      ? `Reunión añadida y correo enviado a ${notification.recipients} personas.`
-      : `Reunión añadida. ${notification.message}`,
+    message: `Reunión añadida. ${notification.message}`,
   };
 }
 
@@ -490,9 +488,7 @@ async function updateMeeting(request, env, id, sessionUser) {
   return {
     ok: true,
     notification,
-    message: notification.sent
-      ? `Reunión actualizada y correo enviado a ${notification.recipients} personas.`
-      : `Reunión actualizada. ${notification.message}`,
+    message: `Reunión actualizada. ${notification.message}`,
   };
 }
 
@@ -739,6 +735,33 @@ function meetingApiPayload(meeting) {
   };
 }
 
+function emailDetailCard(label, value) {
+  return `<tr><td style="padding:5px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding:9px 12px;border:1px solid #e6e8ec;border-radius:7px;background:#f8f9fb"><span style="display:block;color:#667085;font-size:12px">${escapeHtml(label)}</span><strong style="display:block;margin-top:3px;color:#102a43;font-size:14px">${escapeHtml(value)}</strong></td></tr></table></td></tr>`;
+}
+
+function buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetingDate) {
+  const dateDay = new Intl.DateTimeFormat("es-ES", { timeZone: TZ, day: "2-digit" }).format(meetingDate);
+  const dateMonth = new Intl.DateTimeFormat("es-ES", { timeZone: TZ, month: "short" })
+    .format(meetingDate)
+    .replace(".", "")
+    .toUpperCase();
+  const detailCards = [
+    emailDetailCard("Sala", enriched.room_name),
+    emailDetailCard("Modalidad", enriched.modality_name),
+    emailDetailCard("Fecha", enriched.date_label),
+    emailDetailCard("Hora", enriched.time_range),
+    emailDetailCard("Duración", `${enriched.duration} minutos`),
+    emailDetailCard("Reservada por", organizerName || "Un compañero"),
+  ];
+  if (enriched.notes) detailCards.push(emailDetailCard("Observaciones", enriched.notes));
+
+  const linkHtml = enriched.modality === "videoconferencia" && enriched.url
+    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px"><tr><td align="center" bgcolor="#d90429" style="padding:15px 20px;border-radius:8px;background:#d90429"><a href="${escapeHtml(enriched.url)}" style="color:#ffffff;text-decoration:none;font-size:16px;font-weight:700">&#9654;&nbsp;&nbsp; Unirse a la reunión &nbsp;&nbsp;&#8250;</a></td></tr></table>`
+    : "";
+
+  return `<div data-template="executive-split" class="email-shell" style="margin:0;padding:24px;background:#f4f1ec;font-family:Arial,sans-serif;color:#102a43"><style>@media only screen and (max-width:620px){.email-shell{padding:8px!important}.email-column{display:block!important;width:auto!important}.email-brand{padding:20px!important}.email-date{padding-top:20px!important}.email-content{padding:24px 20px!important}}</style><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;border:1px solid #dfe3e8;border-radius:12px;overflow:hidden"><tr><td class="email-column email-brand" width="190" valign="top" bgcolor="#102f50" style="width:190px;padding:28px 22px;background:#102f50;color:#ffffff"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom:22px;border-bottom:2px solid #d6ad4b"><span style="display:inline-block;width:42px;height:42px;line-height:42px;border:5px solid #ffffff;border-radius:50%;text-align:center;color:#d90429;font-family:Georgia,serif;font-size:28px;font-weight:700">C</span><p style="margin:16px 0 0;color:#ffffff;font-family:Georgia,serif;font-size:21px;line-height:1.12">Cámara de Comercio<br>de Ceuta</p></td></tr><tr><td class="email-date" align="center" style="padding-top:72px"><span style="display:block;color:#ffffff;font-family:Georgia,serif;font-size:64px;line-height:1;font-weight:700">${dateDay}</span><span style="display:block;margin-top:7px;color:#f1cd70;font-family:Georgia,serif;font-size:27px;letter-spacing:.08em">${dateMonth}</span></td></tr></table></td><td class="email-column email-content" valign="top" style="padding:28px 30px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td><p style="margin:0;color:#d90429;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.16em">${escapeHtml(actionLabel)}</p><h1 style="margin:8px 0 16px;color:#102a43;font-family:Georgia,serif;font-size:28px;line-height:1.15">${escapeHtml(enriched.title || "Reunión sin título")}</h1></td></tr>${detailCards.join("")}<tr><td>${linkHtml}</td></tr><tr><td style="padding-top:18px;border-top:1px solid #d6ad4b"><p style="margin:0;color:#667085;font-size:12px">Portal de reuniones · Cámara de Comercio de Ceuta</p></td></tr></table></td></tr></table></div>`;
+}
+
 export function buildMeetingNotification(meeting, organizerName = "Un compañero", action = "created") {
   const enriched = enrichMeeting(meeting);
   const actionLabel = action === "updated" ? "Reserva actualizada" : "Nueva reserva de sala";
@@ -754,17 +777,10 @@ export function buildMeetingNotification(meeting, organizerName = "Un compañero
   if (enriched.notes) details.push(`Observaciones: ${enriched.notes}`);
   if (enriched.modality === "videoconferencia" && enriched.url) details.push(`Enlace: ${enriched.url}`);
 
-  const linkHtml = enriched.modality === "videoconferencia" && enriched.url
-    ? `<p style="margin:24px 0"><a href="${escapeHtml(enriched.url)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#e11d2f;color:#fff;text-decoration:none;font-weight:700">Unirse a la reunión</a></p>`
-    : "";
-  const notesHtml = enriched.notes
-    ? `<tr><td style="padding:8px 12px;color:#667085">Observaciones</td><td style="padding:8px 12px;font-weight:600">${escapeHtml(enriched.notes)}</td></tr>`
-    : "";
-
   return {
     subject: `${actionLabel}: ${enriched.title || "Reunión sin título"}`,
     text: `${actionLabel}\n\n${details.join("\n")}\n\nPortal de reuniones · Cámara de Comercio de Ceuta`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#111827"><div style="border-top:6px solid #e11d2f;padding:24px;border-radius:12px;background:#fff;box-shadow:0 10px 30px #00000014"><p style="margin:0;color:#e11d2f;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em">${escapeHtml(actionLabel)}</p><h1 style="margin:8px 0 20px;color:#0b2d4d;font-size:26px">${escapeHtml(enriched.title || "Reunión sin título")}</h1><table style="width:100%;border-collapse:collapse"><tr><td style="padding:8px 12px;color:#667085">Sala</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.room_name)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Modalidad</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.modality_name)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Fecha</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.date_label)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Hora</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(enriched.time_range)}</td></tr><tr><td style="padding:8px 12px;color:#667085">Duración</td><td style="padding:8px 12px;font-weight:700">${enriched.duration} minutos</td></tr><tr><td style="padding:8px 12px;color:#667085">Reservada por</td><td style="padding:8px 12px;font-weight:700">${escapeHtml(organizerName || "Un compañero")}</td></tr>${notesHtml}</table>${linkHtml}<p style="margin:24px 0 0;color:#667085;font-size:13px">Portal de reuniones · Cámara de Comercio de Ceuta</p></div></div>`,
+    html: buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetingStart(meeting)),
   };
 }
 
@@ -778,18 +794,7 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
     if (!await acquireMeetingNotificationCooldown(env, sessionUser)) {
       return { sent: false, recipients: 0, message: "El correo se ha omitido para evitar envíos repetidos." };
     }
-    const recipients = await env.PORTAL_AUTH_DB.prepare(`
-      SELECT DISTINCT lower(trim(u.email)) AS email
-      FROM users u
-      LEFT JOIN user_application_permissions p
-        ON p.user_id = u.id AND p.application_code = ?
-      WHERE u.active = 1 AND (u.role = 'admin' OR p.active = 1)
-        AND u.email IS NOT NULL AND trim(u.email) <> ''
-    `).bind(CURRENT_APP_CODE).all();
-    const emails = (recipients.results || [])
-      .map((row) => String(row.email || "").trim().toLowerCase())
-      .filter(isValidEmailAddress);
-    if (!emails.length) return { sent: false, recipients: 0, message: "No hay destinatarios con correo configurado." };
+    const emails = [graphConfig.recipientEmail];
 
     const message = buildMeetingNotification(meeting, sessionUser?.username, action);
     const accessToken = await requestMicrosoftGraphToken(graphConfig);
@@ -797,7 +802,7 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
     for (const batch of batches) {
       await sendMicrosoftGraphMessage(graphConfig.senderEmail, accessToken, batch, message);
     }
-    return { sent: true, recipients: emails.length, message: "Notificación enviada." };
+    return { sent: true, recipients: emails.length, message: "Correo enviado al grupo Trabajadores Cámara." };
   } catch (error) {
     console.error(JSON.stringify({ event: "meeting_email_failed", meetingId: meeting.id, message: error?.message || String(error) }));
     return { sent: false, recipients: 0, message: "No se pudo enviar el correo de aviso; la reserva sí quedó guardada." };
@@ -828,8 +833,13 @@ function getMicrosoftGraphConfig(env) {
     clientId: String(env.MICROSOFT_CLIENT_ID || "").trim(),
     clientSecret: String(env.MICROSOFT_CLIENT_SECRET || "").trim(),
     senderEmail: String(env.MICROSOFT_SENDER_EMAIL || "").trim().toLowerCase(),
+    recipientEmail: String(env.MICROSOFT_RECIPIENT_EMAIL || "").trim().toLowerCase(),
   });
-  return Object.values(config).every(Boolean) && isValidEmailAddress(config.senderEmail) ? config : null;
+  return Object.values(config).every(Boolean)
+    && isValidEmailAddress(config.senderEmail)
+    && isValidEmailAddress(config.recipientEmail)
+    ? config
+    : null;
 }
 
 async function requestMicrosoftGraphToken(config) {
