@@ -327,7 +327,7 @@ test("una reserva envía un correo con copia oculta mediante Microsoft Graph", a
     assert.equal(graphRequests[1].options.headers.Authorization, "Bearer graph-access-token");
     const graphMessage = JSON.parse(graphRequests[1].options.body);
     assert.deepEqual(graphMessage.message.bccRecipients, [{ emailAddress: { address: "trabajadores_camara@example.test" } }]);
-    assert.match(body.message, /grupo Trabajadores Cámara/i);
+    assert.match(body.message, /destinatario configurado/i);
     assert.match(graphMessage.message.body.content, /Sala Orientación/);
     assert.match(graphMessage.message.body.content, /Presencial/);
   } finally {

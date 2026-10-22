@@ -802,7 +802,7 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
     for (const batch of batches) {
       await sendMicrosoftGraphMessage(graphConfig.senderEmail, accessToken, batch, message);
     }
-    return { sent: true, recipients: emails.length, message: "Correo enviado al grupo Trabajadores Cámara." };
+    return { sent: true, recipients: emails.length, message: "Correo enviado al destinatario configurado." };
   } catch (error) {
     console.error(JSON.stringify({ event: "meeting_email_failed", meetingId: meeting.id, message: error?.message || String(error) }));
     return { sent: false, recipients: 0, message: "No se pudo enviar el correo de aviso; la reserva sí quedó guardada." };
