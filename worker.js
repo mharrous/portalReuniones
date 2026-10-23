@@ -735,8 +735,13 @@ function meetingApiPayload(meeting) {
   };
 }
 
-function emailDetailCard(label, value) {
-  return `<tr><td style="padding:5px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding:9px 12px;border:1px solid #e6e8ec;border-radius:7px;background:#f8f9fb"><span style="display:block;color:#667085;font-size:12px">${escapeHtml(label)}</span><strong style="display:block;margin-top:3px;color:#102a43;font-size:14px">${escapeHtml(value)}</strong></td></tr></table></td></tr>`;
+function emailDetailCell(label, value, width = "50%", columnSpan = 1) {
+  const colspan = columnSpan > 1 ? ` colspan="${columnSpan}"` : "";
+  return `<td class="email-detail-cell"${colspan} width="${width}" valign="top" bgcolor="#f5f7fa" style="width:${width};padding:12px 14px;border:1px solid #dfe5ec;background:#f5f7fa;background-image:linear-gradient(#f5f7fa,#f5f7fa);border-radius:8px"><span style="display:block;color:#65758b;font-size:11px;line-height:1.3;text-transform:uppercase;letter-spacing:.08em">${escapeHtml(label)}</span><strong style="display:block;margin-top:5px;color:#102f50;font-size:15px;line-height:1.35">${escapeHtml(value)}</strong></td>`;
+}
+
+function emailDetailRow(leftLabel, leftValue, rightLabel, rightValue) {
+  return `<tr>${emailDetailCell(leftLabel, leftValue)}<td class="email-detail-gap" width="12" style="width:12px;font-size:0;line-height:0">&nbsp;</td>${emailDetailCell(rightLabel, rightValue)}</tr><tr><td colspan="3" height="12" style="height:12px;font-size:0;line-height:0">&nbsp;</td></tr>`;
 }
 
 function buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetingDate) {
@@ -745,21 +750,22 @@ function buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetin
     .format(meetingDate)
     .replace(".", "")
     .toUpperCase();
-  const detailCards = [
-    emailDetailCard("Sala", enriched.room_name),
-    emailDetailCard("Modalidad", enriched.modality_name),
-    emailDetailCard("Fecha", enriched.date_label),
-    emailDetailCard("Hora", enriched.time_range),
-    emailDetailCard("Duración", `${enriched.duration} minutos`),
-    emailDetailCard("Reservada por", organizerName || "Un compañero"),
+  const dateMonthLong = new Intl.DateTimeFormat("es-ES", { timeZone: TZ, month: "long" }).format(meetingDate);
+  const dateAriaLabel = `${dateDay} de ${dateMonthLong}`;
+  const detailsHtml = [
+    emailDetailRow("Sala", enriched.room_name, "Modalidad", enriched.modality_name),
+    emailDetailRow("Hora", enriched.time_range, "Duración", `${enriched.duration} minutos`),
+    `<tr>${emailDetailCell("Reservada por", organizerName || "Un compañero", "100%", 3)}</tr>`,
   ];
-  if (enriched.notes) detailCards.push(emailDetailCard("Observaciones", enriched.notes));
+  if (enriched.notes) {
+    detailsHtml.push(`<tr><td colspan="3" height="12" style="height:12px;font-size:0;line-height:0">&nbsp;</td></tr><tr>${emailDetailCell("Observaciones", enriched.notes, "100%", 3)}</tr>`);
+  }
 
   const linkHtml = enriched.modality === "videoconferencia" && enriched.url
-    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px"><tr><td align="center" bgcolor="#d90429" style="padding:15px 20px;border-radius:8px;background:#d90429"><a href="${escapeHtml(enriched.url)}" style="color:#ffffff;text-decoration:none;font-size:16px;font-weight:700">&#9654;&nbsp;&nbsp; Unirse a la reunión &nbsp;&nbsp;&#8250;</a></td></tr></table>`
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:24px"><tr><td align="center" bgcolor="#d90429" style="border-radius:8px;background:#d90429;background-image:linear-gradient(#d90429,#d90429)"><a href="${escapeHtml(enriched.url)}" style="display:inline-block;padding:14px 22px;color:#ffffff;text-decoration:none;font-size:15px;line-height:1.2;font-weight:700">&#9654;&nbsp;&nbsp; Unirse a la reunión</a></td></tr></table>`
     : "";
 
-  return `<div data-template="executive-split" class="email-shell" style="margin:0;padding:24px;background:#f4f1ec;font-family:Arial,sans-serif;color:#102a43"><style>@media only screen and (max-width:620px){.email-shell{padding:8px!important}.email-column{display:block!important;width:auto!important}.email-brand{padding:20px!important}.email-date{padding-top:20px!important}.email-content{padding:24px 20px!important}}</style><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;border:1px solid #dfe3e8;border-radius:12px;overflow:hidden"><tr><td class="email-column email-brand" width="190" valign="top" bgcolor="#102f50" style="width:190px;padding:28px 22px;background:#102f50;color:#ffffff"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom:22px;border-bottom:2px solid #d6ad4b"><span style="display:inline-block;width:42px;height:42px;line-height:42px;border:5px solid #ffffff;border-radius:50%;text-align:center;color:#d90429;font-family:Georgia,serif;font-size:28px;font-weight:700">C</span><p style="margin:16px 0 0;color:#ffffff;font-family:Georgia,serif;font-size:21px;line-height:1.12">Cámara de Comercio<br>de Ceuta</p></td></tr><tr><td class="email-date" align="center" style="padding-top:72px"><span style="display:block;color:#ffffff;font-family:Georgia,serif;font-size:64px;line-height:1;font-weight:700">${dateDay}</span><span style="display:block;margin-top:7px;color:#f1cd70;font-family:Georgia,serif;font-size:27px;letter-spacing:.08em">${dateMonth}</span></td></tr></table></td><td class="email-column email-content" valign="top" style="padding:28px 30px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td><p style="margin:0;color:#d90429;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.16em">${escapeHtml(actionLabel)}</p><h1 style="margin:8px 0 16px;color:#102a43;font-family:Georgia,serif;font-size:28px;line-height:1.15">${escapeHtml(enriched.title || "Reunión sin título")}</h1></td></tr>${detailCards.join("")}<tr><td>${linkHtml}</td></tr><tr><td style="padding-top:18px;border-top:1px solid #d6ad4b"><p style="margin:0;color:#667085;font-size:12px">Portal de reuniones · Cámara de Comercio de Ceuta</p></td></tr></table></td></tr></table></div>`;
+  return `<div data-template="executive-agenda" class="email-shell" style="margin:0;padding:28px 12px;background:#eef2f6;background-image:linear-gradient(#eef2f6,#eef2f6);font-family:Arial,sans-serif;color:#102f50"><style>:root{color-scheme:light only;supported-color-schemes:light only}@media only screen and (max-width:620px){.email-shell{padding:10px 4px!important}.email-main{padding:24px 18px!important}.email-title-cell{padding-left:16px!important}.email-title{font-size:25px!important}.email-detail-cell{display:block!important;width:auto!important}.email-detail-gap{display:none!important}}</style><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);border:1px solid #d7e0e9;border-radius:14px;overflow:hidden"><tr><td bgcolor="#102f50" style="padding:20px 28px;background:#102f50;background-image:linear-gradient(#102f50,#102f50);border-bottom:4px solid #d6ad4b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td valign="middle"><span style="display:inline-block;width:34px;height:34px;line-height:34px;border:4px solid #ffffff;border-radius:50%;text-align:center;color:#ef3340;font-family:Georgia,serif;font-size:23px;font-weight:700">C</span></td><td width="100%" valign="middle" style="padding-left:13px"><strong style="display:block;color:#ffffff;font-family:Georgia,serif;font-size:20px;line-height:1.2">Cámara de Comercio de Ceuta</strong><span style="display:block;margin-top:3px;color:#cbd8e6;font-size:12px;line-height:1.3">Portal de reserva de salas</span></td></tr></table></td></tr><tr><td class="email-main" bgcolor="#ffffff" style="padding:32px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="88" valign="top"><table role="presentation" width="82" cellspacing="0" cellpadding="0" border="0" aria-label="${escapeHtml(dateAriaLabel)}" style="width:82px;border:1px solid #d7e0e9;border-top:5px solid #d90429;border-radius:9px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><tr><td align="center" style="padding:10px 6px 3px"><strong style="display:block;color:#102f50;font-family:Georgia,serif;font-size:34px;line-height:1">${dateDay}</strong></td></tr><tr><td align="center" style="padding:0 6px 10px"><span style="display:block;color:#b1841d;font-size:13px;font-weight:800;letter-spacing:.12em">${dateMonth}</span></td></tr></table></td><td class="email-title-cell" valign="top" style="padding-left:22px"><p style="margin:1px 0 0;color:#d90429;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.15em">${escapeHtml(actionLabel)}</p><h1 class="email-title" style="margin:8px 0 7px;color:#102f50;font-family:Georgia,serif;font-size:30px;line-height:1.15">${escapeHtml(enriched.title || "Reunión sin título")}</h1><p style="margin:0;color:#65758b;font-size:14px;line-height:1.45">${escapeHtml(enriched.date_label)}</p></td></tr><tr><td colspan="2" style="padding-top:28px"><p style="margin:0 0 13px;color:#102f50;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.1em">Resumen de la reserva</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${detailsHtml.join("")}</table>${linkHtml}</td></tr></table></td></tr><tr><td bgcolor="#f5f7fa" style="padding:17px 32px;background:#f5f7fa;background-image:linear-gradient(#f5f7fa,#f5f7fa);border-top:1px solid #dfe5ec"><p style="margin:0;color:#65758b;font-size:12px;line-height:1.45">Aviso automático del Portal de reuniones · Cámara de Comercio de Ceuta</p></td></tr></table></div>`;
 }
 
 export function buildMeetingNotification(meeting, organizerName = "Un compañero", action = "created") {
@@ -785,6 +791,10 @@ export function buildMeetingNotification(meeting, organizerName = "Un compañero
 }
 
 async function sendMeetingNotification(env, meeting, sessionUser, action) {
+  if (String(env.MEETING_NOTIFICATIONS_ENABLED || "true").toLowerCase() === "false") {
+    return { sent: false, paused: true, recipients: 0, message: "Avisos por correo pausados." };
+  }
+
   const graphConfig = getMicrosoftGraphConfig(env);
   if (!graphConfig || !env.PORTAL_AUTH_DB) {
     return { sent: false, recipients: 0, message: "El envío de correo todavía no está configurado." };

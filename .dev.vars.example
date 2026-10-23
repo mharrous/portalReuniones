@@ -4,3 +4,4 @@ MICROSOFT_CLIENT_ID=identificador-de-la-aplicacion
 MICROSOFT_CLIENT_SECRET=secreto-de-la-aplicacion
 MICROSOFT_SENDER_EMAIL=correo-remitente
 MICROSOFT_RECIPIENT_EMAIL=correo-del-grupo
+MEETING_NOTIFICATIONS_ENABLED=false

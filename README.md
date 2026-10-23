@@ -50,6 +50,8 @@ npx wrangler secret put MICROSOFT_RECIPIENT_EMAIL
 
 `MICROSOFT_SENDER_EMAIL` debe ser el buzón corporativo desde el que se enviarán los avisos. `MICROSOFT_RECIPIENT_EMAIL` debe contener el correo del grupo corporativo que recibirá las notificaciones. El secreto de cliente se copia una sola vez al crearlo en Microsoft Entra.
 
+El envío puede pausarse sin eliminar la configuración estableciendo `MEETING_NOTIFICATIONS_ENABLED=false`. Para reactivarlo, cambia el valor a `true` y vuelve a desplegar.
+
 ## Despliegue manual seguro
 
 Para actualizar el Worker sin tocar la configuraci?n KV:

@@ -335,6 +335,57 @@ test("una reserva envía un correo con copia oculta mediante Microsoft Graph", a
   }
 });
 
+test("no envía correos cuando los avisos están pausados", async () => {
+  const originalFetch = globalThis.fetch;
+  let graphRequests = 0;
+  globalThis.fetch = async () => {
+    graphRequests += 1;
+    return new Response(null, { status: 202 });
+  };
+
+  const env = {
+    AUTH_SECRET,
+    MEETING_NOTIFICATIONS_ENABLED: "false",
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    MICROSOFT_RECIPIENT_EMAIL: "avisos_salas@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "https://reuniones.example.test",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        title: "Reserva sin aviso",
+        date: "2099-10-23",
+        time: "12:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(body.notification.sent, false);
+    assert.equal(body.notification.paused, true);
+    assert.match(body.message, /avisos por correo pausados/i);
+    assert.equal(graphRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("evita avisos repetidos del mismo usuario durante el periodo de seguridad", async () => {
   const graphRequests = [];
   const originalFetch = globalThis.fetch;

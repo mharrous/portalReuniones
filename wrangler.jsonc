@@ -4,6 +4,9 @@
   "main": "worker.js",
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
+  "vars": {
+    "MEETING_NOTIFICATIONS_ENABLED": "false"
+  },
   "d1_databases": [
     {
       "binding": "PORTAL_AUTH_DB",

@@ -53,7 +53,7 @@ test("genera un correo con todos los detalles de la reserva", () => {
   assert.match(notification.text, /https:\/\/teams\.microsoft\.com\/example/);
 });
 
-test("usa la plantilla ejecutiva y escapa el contenido dinámico", () => {
+test("usa la plantilla ejecutiva de agenda y escapa el contenido dinámico", () => {
   const notification = buildMeetingNotification({
     ...baseMeeting,
     title: "Comité & seguimiento",
@@ -63,10 +63,13 @@ test("usa la plantilla ejecutiva y escapa el contenido dinámico", () => {
     notes: "Revisar <img src=x onerror=alert(1)>",
   }, "Mustafa <Admin>", "created");
 
-  assert.match(notification.html, /data-template="executive-split"/);
-  assert.match(notification.html, />20<\/span>/);
+  assert.match(notification.html, /data-template="executive-agenda"/);
+  assert.match(notification.html, /aria-label="20 de octubre"/);
+  assert.match(notification.html, />20<\/strong>/);
   assert.match(notification.html, />OCT<\/span>/);
-  assert.match(notification.html, /Cámara de Comercio<br>de Ceuta/);
+  assert.match(notification.html, /Cámara de Comercio de Ceuta/);
+  assert.match(notification.html, /Resumen de la reserva/);
+  assert.match(notification.html, /background-image:linear-gradient\(#ffffff,#ffffff\)/);
   assert.match(notification.html, /Comité &amp; seguimiento/);
   assert.match(notification.html, /Mustafa &lt;Admin&gt;/);
   assert.match(notification.html, /Revisar &lt;img src=x onerror=alert\(1\)&gt;/);
