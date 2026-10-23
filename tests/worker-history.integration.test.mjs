@@ -196,10 +196,12 @@ test("la API permite el mismo horario en salas distintas y bloquea solapes por s
 
   const pleno = await createMeeting("sala-pleno", "Reunión en Pleno");
   const orientacion = await createMeeting("sala-orientacion", "Reunión en Orientación");
+  const salonActos = await createMeeting("salon-actos", "Evento en Salón de Actos");
   const plenoDuplicado = await createMeeting("sala-pleno", "Reunión duplicada");
 
   assert.equal(pleno.ok, true);
   assert.equal(orientacion.ok, true);
+  assert.equal(salonActos.ok, true);
   assert.equal(plenoDuplicado.ok, false);
   assert.match(plenoDuplicado.message, /Sala Pleno ya está ocupada/);
 });

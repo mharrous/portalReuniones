@@ -5,6 +5,7 @@ const DEFAULT_ROOM_ID = "sala-pleno";
 const MEETING_ROOMS = Object.freeze([
   { id: "sala-pleno", name: "Sala Pleno" },
   { id: "sala-orientacion", name: "Sala Orientación" },
+  { id: "salon-actos", name: "Salón de Actos" },
 ]);
 const TZ = "Europe/Madrid";
 const DEFAULT_DURATION = 60;
@@ -1186,7 +1187,7 @@ function renderApp(initialView, sessionUser) {
 <main class="shell">
   <section class="views active" id="homeView">
     <section class="overview-grid" aria-label="Resumen de la sala">
-      <article class="metric-card primary"><span>Estado de las salas</span><strong id="stateText">Libres</strong><small id="stateSmall">Sala Pleno y Sala Orientación disponibles</small></article>
+      <article class="metric-card primary"><span>Estado de las salas</span><strong id="stateText">Libres</strong><small id="stateSmall">Todas las salas disponibles</small></article>
       <article class="metric-card"><span>Reuniones hoy</span><strong id="todayCount">0</strong><small>Programadas desde ahora</small></article>
       <article class="metric-card"><span>Agenda visible</span><strong id="visibleCount">0</strong><small>Reuniones activas o futuras</small></article>
     </section>
@@ -1211,7 +1212,7 @@ function renderApp(initialView, sessionUser) {
         <div class="field full is-required" id="meetingUrlField"><label>Enlace de la reunión</label><input name="url" required placeholder="https://..."><span class="field-help" id="meetingUrlHelp">Obligatorio para videoconferencias.</span></div>
         <div class="field"><label>Fecha</label><input name="date" type="date" required></div>
         <div class="field"><label>Hora</label><input name="time" type="time" required></div>
-        <div class="field"><label>Sala</label><select name="room" required><option value="sala-pleno" selected>Sala Pleno</option><option value="sala-orientacion">Sala Orientación</option></select></div>
+        <div class="field"><label>Sala</label><select name="room" required><option value="sala-pleno" selected>Sala Pleno</option><option value="sala-orientacion">Sala Orientación</option><option value="salon-actos">Salón de Actos</option></select></div>
         <div class="field"><label>Duración</label><select name="duration"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">120 min</option></select></div>
         <div class="field full"><label>Observaciones</label><textarea name="notes" placeholder="Notas opcionales"></textarea></div>
         <div class="form-actions field full"><button class="btn btn-filled" id="saveMeetingButton" type="submit">Guardar reunión</button></div>
@@ -1273,7 +1274,7 @@ function renderHome() {
   $('#roomState').classList.toggle('busy', agenda.room_busy);
   const busyRoomCount = Number(agenda.busy_room_count || 0);
   $('#stateText').textContent = busyRoomCount ? busyRoomCount + (busyRoomCount === 1 ? ' ocupada' : ' ocupadas') : 'Libres';
-  $('#stateSmall').textContent = busyRoomCount ? (agenda.occupied_room_names || []).join(' y ') + (busyRoomCount === 1 ? ' está ocupada' : ' están ocupadas') : 'Sala Pleno y Sala Orientación disponibles';
+  $('#stateSmall').textContent = busyRoomCount ? (agenda.occupied_room_names || []).join(' y ') + (busyRoomCount === 1 ? ' está ocupada' : ' están ocupadas') : 'Todas las salas disponibles';
   $('#todayCount').textContent = agenda.today_count;
   $('#visibleCount').textContent = agenda.visible_count;
   renderFeatured();

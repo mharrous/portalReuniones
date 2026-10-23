@@ -28,6 +28,10 @@ test("asigna las reuniones antiguas sin sala a Sala Pleno", () => {
   assert.equal(meetingRoomId(baseMeeting), "sala-pleno");
 });
 
+test("reconoce el Salón de Actos como sala reservable", () => {
+  assert.equal(meetingRoomId({ ...baseMeeting, room: "salon-actos" }), "salon-actos");
+});
+
 test("conserva como videoconferencia las reuniones antiguas con enlace", () => {
   assert.equal(meetingModality({ ...baseMeeting, url: "https://teams.microsoft.com/example" }), "videoconferencia");
 });

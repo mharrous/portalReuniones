@@ -26,8 +26,8 @@ El historial solo se entrega a usuarios autenticados. Conserva el título, la fe
 
 ## Salas disponibles
 
-Al crear o editar una reunión se selecciona `Sala Pleno` o `Sala Orientación`.
-Los conflictos de horario se validan por sala, por lo que ambas salas pueden reservarse a la misma hora.
+Al crear o editar una reunión se selecciona `Sala Pleno`, `Sala Orientación` o `Salón de Actos`.
+Los conflictos de horario se validan por sala, por lo que las tres salas pueden reservarse a la misma hora.
 Las reuniones antiguas que no tengan sala asignada se muestran como `Sala Pleno`.
 
 ## Modalidad y avisos por correo
