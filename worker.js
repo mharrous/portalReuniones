@@ -1,4 +1,5 @@
 import { mergeRecentMeetingHistory } from "./meeting-history.js";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const ROOM_NAME = "Salas de reuniones";
 const DEFAULT_ROOM_ID = "sala-pleno";
@@ -105,6 +106,11 @@ export default {
 
       if (path === "/api/meetings" && request.method === "POST") {
         return jsonResponse(await createMeeting(request, env, sessionUser));
+      }
+
+      const meetingSign = path.match(/^\/api\/meetings\/([^/]+)\/sign\.pdf$/);
+      if (meetingSign && request.method === "GET") {
+        return meetingSignPdfResponse(env, decodeURIComponent(meetingSign[1]));
       }
 
       const meetingUpdate = path.match(/^\/api\/meetings\/([^/]+)\/update$/);
@@ -381,11 +387,11 @@ function shouldAutoDeleteMeeting(meeting, now = new Date()) {
 
 async function createMeeting(request, env, sessionUser) {
   const data = await readRequestData(request);
-  const title = clean(data.title || "");
+  const title = clean(data.title || "").slice(0, 160);
   const date = clean(data.date || "");
   const time = clean(data.time || "");
-  const url = clean(data.url || "");
-  const notes = clean(data.notes || "");
+  const url = clean(data.url || "").slice(0, 2048);
+  const notes = clean(data.notes || "").slice(0, 500);
   const room = requestedRoomId(data.room || "");
   const modality = requestedMeetingModality(data.modality || "") || (url ? DEFAULT_MODALITY : "presencial");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
@@ -423,6 +429,7 @@ async function createMeeting(request, env, sessionUser) {
     duration,
     room,
     modality,
+    organizer_name: clean(sessionUser?.username || "") || "Personal de la Cámara",
     created_at: new Date().toISOString(),
   };
   meetings.push(meeting);
@@ -432,17 +439,18 @@ async function createMeeting(request, env, sessionUser) {
   return {
     ok: true,
     notification,
+    sign_url: `/api/meetings/${encodeURIComponent(meeting.id)}/sign.pdf`,
     message: `Reunión añadida. ${notification.message}`,
   };
 }
 
 async function updateMeeting(request, env, id, sessionUser) {
   const data = await readRequestData(request);
-  const title = clean(data.title || "");
+  const title = clean(data.title || "").slice(0, 160);
   const date = clean(data.date || "");
   const time = clean(data.time || "");
-  const url = clean(data.url || "");
-  const notes = clean(data.notes || "");
+  const url = clean(data.url || "").slice(0, 2048);
+  const notes = clean(data.notes || "").slice(0, 500);
   const room = requestedRoomId(data.room || "");
   const modality = requestedMeetingModality(data.modality || "") || (url ? DEFAULT_MODALITY : "presencial");
   const duration = clampNumber(Number(data.duration || DEFAULT_DURATION), 15, 480, DEFAULT_DURATION);
@@ -481,6 +489,7 @@ async function updateMeeting(request, env, id, sessionUser) {
   meeting.duration = duration;
   meeting.room = room;
   meeting.modality = modality;
+  meeting.organizer_name = clean(sessionUser?.username || "") || meeting.organizer_name || "Personal de la Cámara";
   meeting.updated_at = new Date().toISOString();
   delete meeting.ended_at;
 
@@ -716,6 +725,255 @@ function enrichMeeting(meeting) {
     start_ts: start.getTime(),
     end_ts: end.getTime(),
   };
+}
+
+const PDF_POINT_PER_MM = 72 / 25.4;
+const PDF_A4_WIDTH = 210 * PDF_POINT_PER_MM;
+const PDF_A4_HEIGHT = 297 * PDF_POINT_PER_MM;
+const PDF_SIGN_WIDTH = 150 * PDF_POINT_PER_MM;
+const PDF_SIGN_HEIGHT = 100 * PDF_POINT_PER_MM;
+const PDF_COLORS = Object.freeze({
+  navy: rgb(16 / 255, 47 / 255, 80 / 255),
+  blue: rgb(61 / 255, 94 / 255, 135 / 255),
+  red: rgb(217 / 255, 4 / 255, 41 / 255),
+  gold: rgb(214 / 255, 173 / 255, 75 / 255),
+  pale: rgb(244 / 255, 247 / 255, 250 / 255),
+  line: rgb(215 / 255, 224 / 255, 233 / 255),
+  muted: rgb(92 / 255, 111 / 255, 133 / 255),
+  white: rgb(1, 1, 1),
+});
+
+function pdfSafeText(value) {
+  const replacements = new Map([
+    ["—", "-"], ["–", "-"], ["…", "..."], ["‘", "'"], ["’", "'"],
+    ["“", '"'], ["”", '"'], ["•", "-"], ["€", "EUR"],
+  ]);
+  return Array.from(clean(value).slice(0, 1000), (character) => {
+    if (replacements.has(character)) return replacements.get(character);
+    const codePoint = character.codePointAt(0);
+    return (codePoint >= 32 && codePoint <= 126) || (codePoint >= 160 && codePoint <= 255)
+      ? character
+      : " ";
+  }).join("").replace(/\s+/g, " ").trim();
+}
+
+function truncatePdfText(text, font, size, maxWidth) {
+  const value = pdfSafeText(text);
+  if (font.widthOfTextAtSize(value, size) <= maxWidth) return value;
+
+  let lowerBound = 0;
+  let upperBound = value.length;
+  while (lowerBound < upperBound) {
+    const midpoint = Math.ceil((lowerBound + upperBound) / 2);
+    const candidate = `${value.slice(0, midpoint).trimEnd()}...`;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) lowerBound = midpoint;
+    else upperBound = midpoint - 1;
+  }
+  return `${value.slice(0, lowerBound).trimEnd()}...`;
+}
+
+function wrapPdfText(text, font, size, maxWidth, maxLines = 2) {
+  const words = pdfSafeText(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = "";
+
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index];
+    const candidate = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) lines.push(current);
+    if (lines.length === maxLines - 1) {
+      current = truncatePdfText(words.slice(index).join(" "), font, size, maxWidth);
+      break;
+    }
+    current = truncatePdfText(word, font, size, maxWidth);
+  }
+
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+function drawCropMarks(page, x, y, width, height) {
+  const gap = 3 * PDF_POINT_PER_MM;
+  const length = 7 * PDF_POINT_PER_MM;
+  const color = rgb(0.28, 0.28, 0.28);
+  const thickness = 0.6;
+  const corners = [
+    { x, y, horizontal: -1, vertical: -1 },
+    { x: x + width, y, horizontal: 1, vertical: -1 },
+    { x, y: y + height, horizontal: -1, vertical: 1 },
+    { x: x + width, y: y + height, horizontal: 1, vertical: 1 },
+  ];
+
+  for (const corner of corners) {
+    page.drawLine({
+      start: { x: corner.x + corner.horizontal * gap, y: corner.y },
+      end: { x: corner.x + corner.horizontal * (gap + length), y: corner.y },
+      thickness,
+      color,
+    });
+    page.drawLine({
+      start: { x: corner.x, y: corner.y + corner.vertical * gap },
+      end: { x: corner.x, y: corner.y + corner.vertical * (gap + length) },
+      thickness,
+      color,
+    });
+  }
+}
+
+function drawPdfDetail(page, fonts, label, value, x, y, width) {
+  page.drawText(label.toUpperCase(), {
+    x,
+    y,
+    size: 7.5,
+    font: fonts.bold,
+    color: PDF_COLORS.muted,
+  });
+  page.drawText(truncatePdfText(value, fonts.bold, 11.5, width), {
+    x,
+    y: y - 15,
+    size: 11.5,
+    font: fonts.bold,
+    color: PDF_COLORS.navy,
+  });
+}
+
+export async function buildMeetingSignPdf(meeting) {
+  const enriched = enrichMeeting(meeting);
+  const document = await PDFDocument.create();
+  const page = document.addPage([PDF_A4_WIDTH, PDF_A4_HEIGHT]);
+  const fonts = {
+    regular: await document.embedFont(StandardFonts.Helvetica),
+    bold: await document.embedFont(StandardFonts.HelveticaBold),
+    serif: await document.embedFont(StandardFonts.TimesRomanBold),
+  };
+  const signX = (PDF_A4_WIDTH - PDF_SIGN_WIDTH) / 2;
+  const signY = (PDF_A4_HEIGHT - PDF_SIGN_HEIGHT) / 2 + 28;
+  const padding = 22;
+  const contentX = signX + padding;
+  const contentWidth = PDF_SIGN_WIDTH - padding * 2;
+
+  page.drawRectangle({ x: 0, y: 0, width: PDF_A4_WIDTH, height: PDF_A4_HEIGHT, color: PDF_COLORS.white });
+  page.drawRectangle({
+    x: signX,
+    y: signY,
+    width: PDF_SIGN_WIDTH,
+    height: PDF_SIGN_HEIGHT,
+    color: PDF_COLORS.white,
+    borderColor: PDF_COLORS.navy,
+    borderWidth: 1.25,
+  });
+  page.drawRectangle({
+    x: signX,
+    y: signY + PDF_SIGN_HEIGHT - 52,
+    width: PDF_SIGN_WIDTH,
+    height: 52,
+    color: PDF_COLORS.navy,
+  });
+  page.drawRectangle({
+    x: signX,
+    y: signY + PDF_SIGN_HEIGHT - 56,
+    width: PDF_SIGN_WIDTH,
+    height: 4,
+    color: PDF_COLORS.gold,
+  });
+
+  page.drawCircle({ x: contentX + 15, y: signY + PDF_SIGN_HEIGHT - 26, size: 14, borderColor: PDF_COLORS.white, borderWidth: 2.5 });
+  page.drawText("C", { x: contentX + 7.5, y: signY + PDF_SIGN_HEIGHT - 35, size: 23, font: fonts.serif, color: PDF_COLORS.red });
+  page.drawText("CÁMARA DE COMERCIO DE CEUTA", {
+    x: contentX + 42,
+    y: signY + PDF_SIGN_HEIGHT - 23,
+    size: 13,
+    font: fonts.bold,
+    color: PDF_COLORS.white,
+  });
+  page.drawText("Portal de reserva de salas", {
+    x: contentX + 42,
+    y: signY + PDF_SIGN_HEIGHT - 38,
+    size: 8.5,
+    font: fonts.regular,
+    color: rgb(0.78, 0.84, 0.9),
+  });
+
+  page.drawText("SALA RESERVADA", {
+    x: contentX,
+    y: signY + PDF_SIGN_HEIGHT - 82,
+    size: 9,
+    font: fonts.bold,
+    color: PDF_COLORS.red,
+  });
+  page.drawText(enriched.room_name.toUpperCase(), {
+    x: contentX,
+    y: signY + PDF_SIGN_HEIGHT - 109,
+    size: 20,
+    font: fonts.serif,
+    color: PDF_COLORS.navy,
+  });
+
+  const titleLines = wrapPdfText(enriched.title || "Reunión sin título", fonts.bold, 15, contentWidth, 2);
+  titleLines.forEach((line, index) => {
+    page.drawText(line, {
+      x: contentX,
+      y: signY + PDF_SIGN_HEIGHT - 137 - index * 18,
+      size: 15,
+      font: fonts.bold,
+      color: PDF_COLORS.blue,
+    });
+  });
+
+  const detailBoxY = signY + 10;
+  page.drawRectangle({
+    x: contentX,
+    y: detailBoxY,
+    width: contentWidth,
+    height: 111,
+    color: PDF_COLORS.pale,
+    borderColor: PDF_COLORS.line,
+    borderWidth: 0.7,
+  });
+  const columnWidth = (contentWidth - 18) / 2;
+  drawPdfDetail(page, fonts, "Fecha", enriched.date_label, contentX + 12, signY + 101, columnWidth - 12);
+  drawPdfDetail(page, fonts, "Horario", enriched.time_range, contentX + columnWidth + 18, signY + 101, columnWidth - 12);
+  drawPdfDetail(page, fonts, "Duración", `${enriched.duration} minutos`, contentX + 12, signY + 67, columnWidth - 12);
+  drawPdfDetail(page, fonts, "Modalidad", enriched.modality_name, contentX + columnWidth + 18, signY + 67, columnWidth - 12);
+  drawPdfDetail(page, fonts, "Reservada por", meeting.organizer_name || "Personal de la Cámara", contentX + 12, signY + 33, columnWidth - 12);
+  drawPdfDetail(page, fonts, "Observaciones", meeting.notes || "Sin observaciones", contentX + columnWidth + 18, signY + 33, columnWidth - 12);
+
+  drawCropMarks(page, signX, signY, PDF_SIGN_WIDTH, PDF_SIGN_HEIGHT);
+  const printNote = "Imprimir en A4 a tamaño real (100 %) y recortar por las marcas.";
+  page.drawText(printNote, {
+    x: (PDF_A4_WIDTH - fonts.regular.widthOfTextAtSize(printNote, 9)) / 2,
+    y: signY - 54,
+    size: 9,
+    font: fonts.regular,
+    color: PDF_COLORS.muted,
+  });
+
+  document.setTitle(`Cartel de reserva - ${enriched.title}`);
+  document.setAuthor("Cámara de Comercio de Ceuta");
+  document.setSubject(`Reserva de ${enriched.room_name}`);
+  return document.save();
+}
+
+async function meetingSignPdfResponse(env, id) {
+  const meeting = (await loadMeetings(env)).find((item) => item.id === id);
+  if (!meeting) return jsonResponse({ ok: false, message: "Reunión no encontrada." }, 404);
+
+  const bytes = await buildMeetingSignPdf(meeting);
+  const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(meeting.date || "") ? meeting.date : "reserva";
+  const safeRoom = meetingRoomId(meeting).replace(/[^a-z0-9-]/g, "");
+  return new Response(bytes, {
+    headers: {
+      "content-type": "application/pdf",
+      "content-disposition": `inline; filename="cartel-reserva-${safeDate}-${safeRoom}.pdf"`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 function meetingApiPayload(meeting) {
@@ -1157,6 +1415,7 @@ function renderApp(initialView, sessionUser) {
 <style>
 :root{--red:#e11d2f;--red-dark:#a50f1e;--navy:#0b2d4d;--blue:#123c68;--gold:#d6b20e;--bg:#f4f1ec;--surface:#fff;--soft:#f7f9fc;--line:#d8e0ea;--ink:#111827;--muted:#667085;--green:#067647;--green-soft:#dcfae6;--yellow-soft:#fff3bd;--shadow:0 18px 54px rgba(11,45,77,.12);--radius:18px}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top left,rgba(225,29,47,.10),transparent 32%),radial-gradient(circle at top right,rgba(214,178,14,.16),transparent 34%),var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}.topbar,.shell{width:min(1500px,calc(100% - 32px));margin:0 auto}.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:14px;padding:26px 28px;background:#fff;border:1px solid var(--line);border-top:7px solid var(--red);border-radius:10px;box-shadow:var(--shadow)}.brand{display:flex;align-items:center;gap:24px}.brand-logo{display:flex;align-items:center;justify-content:center;min-width:280px;width:280px}.brand-logo img{display:block;width:100%;height:auto;object-fit:contain}.eyebrow{margin:0 0 6px;color:var(--red);font-weight:900;font-size:.78rem;letter-spacing:.16em;text-transform:uppercase}.topbar h1{margin:0;font-size:clamp(2.4rem,5vw,4.8rem);line-height:.95}.room-state{min-width:210px;padding:18px 22px;border-radius:12px;text-align:right;background:var(--green-soft);color:var(--green)}.room-state.busy{background:var(--yellow-soft);color:var(--red-dark)}.room-state strong{font-size:2.45rem;font-variant-numeric:tabular-nums}.shell{padding:24px 0 54px}.overview-grid{display:grid;grid-template-columns:1.15fr .85fr .85fr;gap:16px;margin-bottom:14px}.metric-card{min-height:104px;padding:18px 20px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);box-shadow:0 12px 30px rgba(11,45,77,.06)}.metric-card.primary{background:linear-gradient(135deg,var(--navy),var(--blue));color:#fff}.metric-card span{display:block;font-size:.78rem;text-transform:uppercase;letter-spacing:.16em;font-weight:900;color:inherit;opacity:.76}.metric-card strong{display:block;margin-top:8px;font-size:2.45rem;line-height:1}.metric-card small{display:block;margin-top:8px;font-weight:800;color:inherit;opacity:.72}.hero-panel{display:grid;grid-template-columns:minmax(0,1fr) 210px;overflow:hidden;border:1px solid var(--line);border-left:1px solid var(--gold);border-radius:10px;background:#fff;box-shadow:var(--shadow);margin-bottom:18px}.hero-panel.empty{display:flex;align-items:center;justify-content:space-between;padding:30px}.hero-copy{padding:28px}.hero-labels,.meeting-badges{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.status-chip,.platform-chip{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 11px;font-size:.72rem;text-transform:uppercase;font-weight:900;letter-spacing:.04em}.status-chip.live{background:var(--red);color:#fff}.status-chip.soon{background:var(--yellow-soft);color:#9a6700}.status-chip.scheduled{background:var(--soft);color:var(--muted)}.platform-chip{background:#eef4ff;color:#073b72}.hero-panel h2{margin:12px 0 10px;font-size:clamp(2rem,4.2vw,3.9rem);line-height:1.02}.hero-meta{display:flex;gap:10px;flex-wrap:wrap}.hero-meta span{border-radius:999px;background:var(--soft);padding:10px 12px;color:#536179;font-weight:900}.hero-notes,.meeting-notes{color:var(--muted);font-weight:650}.join-button{display:inline-flex;align-items:center;justify-content:center;gap:12px;border:0;border-radius:8px;background:var(--red);color:#fff;text-decoration:none;font-weight:900;box-shadow:0 18px 34px rgba(225,29,47,.24);cursor:pointer}.join-button.featured{border-radius:0;font-size:1.65rem}.agenda-panel,.form-panel{background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:28px}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:20px}.section-heading h2{margin:0;font-size:2rem}.header-actions,.form-actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 20px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--navy);font-weight:900;text-decoration:none;cursor:pointer}.btn-filled,.primary-button{background:var(--red);border-color:var(--red);color:#fff}.btn-danger{background:#fff1f3;color:var(--red);border-color:#ffcbd1}.meeting-list{display:grid;gap:10px}.meeting-card{display:grid;grid-template-columns:190px minmax(0,1fr) 172px;gap:18px;align-items:center;padding:14px 16px;border:1px solid var(--line);border-left:7px solid var(--gold);border-radius:8px;background:linear-gradient(90deg,#fff9df,#fff 22%)}.meeting-card.live{border-left-color:var(--red)}.meeting-time-block strong{display:block;color:var(--navy);font-size:1.2rem}.meeting-time-block span{display:block;margin-top:8px;color:#536179;font-weight:800}.meeting-main h3{margin:10px 0 0;font-size:1.45rem}.empty-state{padding:28px;border-radius:12px;background:var(--soft);text-align:center;color:var(--muted)}.notice{position:fixed;right:22px;bottom:22px;z-index:5;background:var(--navy);color:#fff;padding:14px 18px;border-radius:12px;box-shadow:var(--shadow);font-weight:800}.views{display:none}.views.active{display:block}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.field{display:grid;gap:7px}.field.full{grid-column:1/-1}.field label{font-weight:900;color:var(--navy)}.field-help{display:block;color:var(--muted);font-size:.9rem;font-weight:650}input,textarea,select{width:100%;min-height:48px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font:inherit}textarea{min-height:110px;resize:vertical}.manage-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}.manage-row:last-child{border-bottom:0}.muted{color:var(--muted)}@media(max-width:900px){.topbar,.brand{align-items:flex-start}.topbar,.brand,.section-heading{flex-direction:column}.overview-grid,.hero-panel,.meeting-card,.form-grid{grid-template-columns:1fr}.join-button.featured{min-height:88px}.brand-logo{min-width:220px;width:220px}.room-state{width:100%;text-align:left}.meeting-card .join-button,.btn{width:100%}}
 .hero-actions{display:grid;grid-template-rows:1fr auto;background:linear-gradient(135deg,var(--red),#f43f5e)}.meeting-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}.join-button{position:relative;min-height:58px;padding:0 24px;border-radius:14px;background:linear-gradient(135deg,#e11d2f,#f43f5e);font-weight:950;letter-spacing:.01em;box-shadow:0 18px 34px rgba(225,29,47,.28);transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}.join-button:hover{transform:translateY(-2px);box-shadow:0 22px 42px rgba(225,29,47,.36);filter:saturate(1.08)}.join-button.featured{border-radius:0;min-height:100%;font-size:1.75rem;box-shadow:none}.edit-button{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 18px;border-radius:14px;border:1px solid var(--line);background:#fff;color:var(--navy);font:inherit;font-weight:950;text-decoration:none;cursor:pointer}.edit-button:hover{border-color:#b8c4d2;box-shadow:0 12px 24px rgba(11,45,77,.10)}.hero-actions .edit-button{min-height:58px;border:0;border-top:1px solid rgba(255,255,255,.45);border-radius:0;background:rgba(255,255,255,.96);color:var(--navy)}@media(max-width:900px){.meeting-actions{width:100%}.meeting-card .edit-button{width:100%}}
+.meeting-card{grid-template-columns:190px minmax(0,1fr) minmax(330px,370px)}.print-button{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 17px;border-radius:14px;border:1px solid #b9c8d8;background:#eef4fa;color:var(--navy);font-weight:950;text-decoration:none;white-space:nowrap}.print-button:hover{border-color:var(--blue);background:#e2edf7;box-shadow:0 12px 24px rgba(11,45,77,.10)}@media(max-width:900px){.meeting-card{grid-template-columns:1fr}.meeting-card .print-button{width:100%}}
 .header-actions .btn:not(.btn-filled),.edit-button{position:relative;overflow:hidden;border:1.5px solid #123c68!important;background:linear-gradient(180deg,#ffffff,#f9fbfe)!important;color:var(--navy)!important;box-shadow:0 8px 18px rgba(11,45,77,.08)!important}.header-actions .btn:not(.btn-filled)::before,.edit-button::before{content:"";position:absolute;left:18px;right:18px;top:0;height:3px;background:linear-gradient(90deg,var(--gold),#f3d34a);border-radius:0 0 999px 999px}.header-actions .btn:not(.btn-filled):hover,.edit-button:hover{transform:translateY(-1px);border-color:var(--navy)!important;background:#fff!important;box-shadow:0 12px 26px rgba(11,45,77,.13)!important}.hero-actions .edit-button{min-height:58px;border:0!important;border-top:1px solid rgba(11,45,77,.16)!important;border-radius:0!important;background:linear-gradient(180deg,#ffffff,#f9fbfe)!important;box-shadow:none!important}.hero-actions .edit-button::before{left:32%;right:32%;top:0;height:3px;border-radius:0 0 999px 999px}
 .hero-panel .hero-actions{display:flex!important;flex-direction:column;align-items:stretch;justify-content:center;gap:14px;padding:18px;background:linear-gradient(180deg,#fff7f8,#ffffff)!important}.hero-panel .join-button.featured{min-height:86px;border-radius:16px!important;font-size:1.55rem;box-shadow:0 22px 42px rgba(225,29,47,.28)!important}.hero-panel .edit-button{min-height:54px;border:1.5px solid #123c68!important;border-radius:16px!important;background:#fff!important;box-shadow:0 10px 22px rgba(11,45,77,.08)!important}.hero-panel .edit-button::before{left:34%;right:34%;top:0;height:3px;border-radius:0 0 999px 999px}
 .agenda-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:4px 0 18px;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,#ffffff,#f8fbff);box-shadow:0 10px 26px rgba(11,45,77,.07)}.agenda-toolbar-text{display:grid;gap:3px}.agenda-toolbar-text strong{color:var(--navy);font-size:1rem}.agenda-toolbar-text span{color:var(--muted);font-size:.9rem;font-weight:700}.agenda-toolbar-actions{display:flex;justify-content:flex-end;gap:12px;flex-wrap:wrap}.agenda-toolbar .btn{min-width:150px}.agenda-toolbar .btn-filled{box-shadow:0 14px 28px rgba(225,29,47,.20)}.hero-panel .hero-actions.single-action{padding:0;background:linear-gradient(135deg,var(--red),#f43f5e)!important}.hero-panel .hero-actions.single-action .join-button.featured{height:100%;min-height:100%;border-radius:0!important;box-shadow:none!important}.room-state{display:flex;align-items:center;justify-content:center;gap:14px;text-align:left}.clock-label{color:var(--green);font-size:.78rem;font-weight:950;letter-spacing:.16em;text-transform:uppercase}.room-state.busy .clock-label{color:var(--red-dark)}@media(max-width:900px){.agenda-toolbar{align-items:stretch;flex-direction:column}.agenda-toolbar-actions{flex-direction:column}.agenda-toolbar .btn{width:100%}}
@@ -1292,6 +1551,9 @@ function meetingJoinAction(meeting, featured) {
   }
   return '<a class="join-button' + (featured ? ' featured' : '') + '" href="' + escapeHtml(meeting.url) + '" target="_blank" rel="noopener noreferrer" data-meeting-id="' + meeting.id + '">Unirse →</a>';
 }
+function meetingSignAction(meeting) {
+  return '<a class="print-button" href="/api/meetings/' + encodeURIComponent(meeting.id) + '/sign.pdf" target="_blank" rel="noopener">Cartel PDF</a>';
+}
 
 function renderFeatured() {
   const box = $('#featuredContainer');
@@ -1312,7 +1574,7 @@ function renderList() {
     return;
   }
 
-  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions">' + meetingJoinAction(meeting, false) + '<button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
+  list.innerHTML = '<div class="meeting-list">' + agenda.meetings.map((meeting) => '<article class="meeting-card ' + meeting.status_class + '"><div class="meeting-time-block"><strong>' + escapeHtml(meeting.time_range) + '</strong><span>' + escapeHtml(meeting.date_label) + '</span></div><div class="meeting-main"><div class="meeting-badges">' + chipStatus(meeting) + chipPlatform(meeting) + chipRoom(meeting) + '</div><h3>' + escapeHtml(meeting.title) + '</h3>' + (meeting.notes ? '<p class="meeting-notes">' + escapeHtml(meeting.notes) + '</p>' : '') + '</div><div class="meeting-actions">' + meetingJoinAction(meeting, false) + meetingSignAction(meeting) + '<button class="edit-button" type="button" data-edit-id="' + meeting.id + '">Editar</button></div></article>').join('') + '</div>';
   bindJoinButtons();
   bindEditButtons();
 }
@@ -1501,15 +1763,32 @@ $('#addForm [name="url"]').addEventListener('input', (event) => {
 });
 $('#addForm').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const isCreating = !editingMeetingId;
+  const pdfWindow = isCreating ? window.open('about:blank', '_blank') : null;
+  if (pdfWindow) {
+    pdfWindow.opener = null;
+    pdfWindow.document.title = 'Preparando cartel PDF';
+    pdfWindow.document.body.innerHTML = '<p style="font-family:Arial,sans-serif;padding:32px;color:#102f50">Preparando el cartel para imprimir…</p>';
+  }
   const body = new FormData(event.currentTarget);
   const endpoint = editingMeetingId ? '/api/meetings/' + editingMeetingId + '/update' : '/api/meetings';
-  const result = await api(endpoint, { method: 'POST', body });
-  showNotice(result.message);
-  if (!result.ok) return;
+  try {
+    const result = await api(endpoint, { method: 'POST', body });
+    showNotice(result.message);
+    if (!result.ok) {
+      if (pdfWindow) pdfWindow.close();
+      return;
+    }
 
-  resetAddForm();
-  setView('home');
-  await loadAgenda();
+    if (pdfWindow && result.sign_url) pdfWindow.location.replace(result.sign_url);
+    if (isCreating && !pdfWindow) showNotice(result.message + ' El navegador bloqueó el cartel; ábrelo con el botón Cartel PDF.');
+    resetAddForm();
+    setView('home');
+    await loadAgenda();
+  } catch (error) {
+    if (pdfWindow) pdfWindow.close();
+    showNotice(error.message || 'No se pudo guardar la reunión.');
+  }
 });
 
 tick();

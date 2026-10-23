@@ -52,6 +52,12 @@ npx wrangler secret put MICROSOFT_RECIPIENT_EMAIL
 
 El envío puede pausarse sin eliminar la configuración estableciendo `MEETING_NOTIFICATIONS_ENABLED=false`. Para reactivarlo, cambia el valor a `true` y vuelve a desplegar.
 
+## Cartel PDF para la puerta
+
+Al crear una reserva, el portal genera y abre automáticamente un cartel PDF en formato A4. La zona recortable mide 15 × 10 cm e incluye sala, título, fecha, horario, duración, modalidad, responsable y observaciones.
+
+Cada reunión conserva además un botón `Cartel PDF` en la agenda para volver a abrirlo o imprimirlo. En el diálogo de impresión selecciona tamaño real o escala `100 %` para mantener las medidas del metacrilato.
+
 ## Despliegue manual seguro
 
 Para actualizar el Worker sin tocar la configuraci?n KV:
