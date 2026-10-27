@@ -1118,7 +1118,7 @@ async function sendMeetingSignToRaquel(env, meeting, sessionUser) {
     const enriched = enrichMeeting(meeting);
     const organizerName = sessionUser?.username || "Un compañero";
     const message = {
-      subject: `Cartel para imprimir: ${enriched.title || "Reunión sin título"}`,
+      subject: `[PORTAL.REUNIONES] Cartel para imprimir: ${enriched.title || "Reunión sin título"}`,
       text: `Nueva reserva de sala\n\nSe adjunta el cartel PDF para imprimir y colocar en el metacrilato.\n\nSala: ${enriched.room_name}\nFecha: ${enriched.date_label}\nHora: ${enriched.time_range}\nReservada por: ${organizerName}`,
       html: buildExecutiveMeetingEmail({ ...enriched, url: "" }, organizerName, "Cartel listo para imprimir", meetingStart(meeting)),
       attachments: [{

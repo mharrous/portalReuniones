@@ -436,6 +436,7 @@ test("envía a Raquel el cartel PDF al crear una reserva aunque los avisos gener
     assert.equal(graphRequests.length, 2);
 
     const graphMessage = JSON.parse(graphRequests[1].options.body).message;
+    assert.match(graphMessage.subject, /^\[PORTAL\.REUNIONES\] Cartel para imprimir:/);
     assert.deepEqual(graphMessage.toRecipients, [{ emailAddress: { address: "info@example.test" } }]);
     assert.equal(graphMessage.bccRecipients, undefined);
     assert.equal(graphMessage.attachments.length, 1);
