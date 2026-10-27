@@ -5,7 +5,8 @@
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
   "vars": {
-    "MEETING_NOTIFICATIONS_ENABLED": "false"
+    "MEETING_NOTIFICATIONS_ENABLED": "false",
+    "RAQUEL_PDF_NOTIFICATIONS_ENABLED": "true"
   },
   "d1_databases": [
     {

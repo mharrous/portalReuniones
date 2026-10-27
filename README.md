@@ -50,13 +50,23 @@ npx wrangler secret put MICROSOFT_RECIPIENT_EMAIL
 
 `MICROSOFT_SENDER_EMAIL` debe ser el buzón corporativo desde el que se enviarán los avisos. `MICROSOFT_RECIPIENT_EMAIL` debe contener el correo del grupo corporativo que recibirá las notificaciones. El secreto de cliente se copia una sola vez al crearlo en Microsoft Entra.
 
-El envío puede pausarse sin eliminar la configuración estableciendo `MEETING_NOTIFICATIONS_ENABLED=false`. Para reactivarlo, cambia el valor a `true` y vuelve a desplegar.
+El envío general puede pausarse sin eliminar la configuración estableciendo `MEETING_NOTIFICATIONS_ENABLED=false`. Para reactivarlo, cambia el valor a `true` y vuelve a desplegar.
 
 ## Cartel PDF para la puerta
 
 Al crear una reserva, el portal genera y abre automáticamente un cartel PDF en formato A4. La zona recortable mide 15 × 10 cm e incluye sala, título, fecha, horario, duración, modalidad, responsable y observaciones.
 
 Cada reunión conserva además un botón `Cartel PDF` en la agenda para volver a abrirlo o imprimirlo. En el diálogo de impresión selecciona tamaño real o escala `100 %` para mantener las medidas del metacrilato.
+
+Al crear una reserva, el Worker envía automáticamente este cartel PDF como adjunto a la persona encargada de colocarlo en el metacrilato. Este envío es independiente de los avisos generales y no se repite al editar la reserva.
+
+Configura el destinatario como secreto de Cloudflare y mantén activada la función en `wrangler.jsonc`:
+
+```powershell
+npx wrangler secret put RAQUEL_PDF_RECIPIENT_EMAIL
+```
+
+La variable `RAQUEL_PDF_NOTIFICATIONS_ENABLED=true` activa únicamente el envío del cartel. El correo del destinatario no se guarda en el repositorio.
 
 ## Despliegue manual seguro
 

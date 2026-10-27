@@ -388,6 +388,217 @@ test("no envía correos cuando los avisos están pausados", async () => {
   }
 });
 
+test("envía a Raquel el cartel PDF al crear una reserva aunque los avisos generales estén pausados", async () => {
+  const graphRequests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    graphRequests.push({ url: String(url), options });
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    return new Response(null, { status: 202 });
+  };
+
+  const env = {
+    AUTH_SECRET,
+    MEETING_NOTIFICATIONS_ENABLED: "false",
+    RAQUEL_PDF_NOTIFICATIONS_ENABLED: "true",
+    RAQUEL_PDF_RECIPIENT_EMAIL: "info@example.test",
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva con cartel",
+        date: "2099-10-27",
+        time: "09:00",
+        duration: "60",
+        room: "sala-orientacion",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(body.notification.paused, true);
+    assert.equal(body.sign_delivery.sent, true);
+    assert.equal(body.sign_delivery.recipients, 1);
+    assert.equal(graphRequests.length, 2);
+
+    const graphMessage = JSON.parse(graphRequests[1].options.body).message;
+    assert.deepEqual(graphMessage.toRecipients, [{ emailAddress: { address: "info@example.test" } }]);
+    assert.equal(graphMessage.bccRecipients, undefined);
+    assert.equal(graphMessage.attachments.length, 1);
+    assert.equal(graphMessage.attachments[0]["@odata.type"], "#microsoft.graph.fileAttachment");
+    assert.equal(graphMessage.attachments[0].name, "cartel-reserva-2099-10-27-sala-orientacion.pdf");
+    assert.equal(graphMessage.attachments[0].contentType, "application/pdf");
+    assert.equal(Buffer.from(graphMessage.attachments[0].contentBytes, "base64").subarray(0, 5).toString(), "%PDF-");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("no envía el cartel PDF a Raquel al editar una reserva", async () => {
+  const graphRequests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    graphRequests.push({ url: String(url), options });
+    return new Response(null, { status: 202 });
+  };
+  const meeting = {
+    id: "meeting-update-without-pdf",
+    title: "Reserva original",
+    date: "2099-10-28",
+    time: "09:00",
+    duration: 60,
+    room: "sala-pleno",
+    modality: "presencial",
+    url: "",
+    notes: "",
+  };
+  const env = {
+    AUTH_SECRET,
+    MEETING_NOTIFICATIONS_ENABLED: "false",
+    RAQUEL_PDF_NOTIFICATIONS_ENABLED: "true",
+    RAQUEL_PDF_RECIPIENT_EMAIL: "info@example.test",
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: JSON.stringify([meeting]) }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request(`https://reuniones.example.test/api/meetings/${meeting.id}/update`, {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva editada",
+        date: meeting.date,
+        time: meeting.time,
+        duration: "60",
+        room: meeting.room,
+        modality: meeting.modality,
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(graphRequests.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("no utiliza el grupo general si falta el correo específico de Raquel", async () => {
+  let graphRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    graphRequests += 1;
+    return new Response(null, { status: 202 });
+  };
+  const env = {
+    AUTH_SECRET,
+    MEETING_NOTIFICATIONS_ENABLED: "false",
+    RAQUEL_PDF_NOTIFICATIONS_ENABLED: "true",
+    MICROSOFT_RECIPIENT_EMAIL: "trabajadores_camara@example.test",
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: createKv({ meetings: "[]" }),
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva sin destinatario específico",
+        date: "2099-10-30",
+        time: "09:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+
+    assert.equal(body.ok, true);
+    assert.equal(body.sign_delivery.sent, false);
+    assert.match(body.sign_delivery.message, /no está configurado/i);
+    assert.equal(graphRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("conserva la reserva si falla el envío del cartel PDF a Raquel", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "graph-access-token", expires_in: 3600 });
+    }
+    return Response.json({ error: { code: "ErrorAccessDenied" } }, { status: 403 });
+  };
+  const meetingsKv = createKv({ meetings: "[]" });
+  const env = {
+    AUTH_SECRET,
+    MEETING_NOTIFICATIONS_ENABLED: "false",
+    RAQUEL_PDF_NOTIFICATIONS_ENABLED: "true",
+    RAQUEL_PDF_RECIPIENT_EMAIL: "info@example.test",
+    MICROSOFT_TENANT_ID: "tenant-id",
+    MICROSOFT_CLIENT_ID: "client-id",
+    MICROSOFT_CLIENT_SECRET: "client-secret",
+    MICROSOFT_SENDER_EMAIL: "reuniones@example.test",
+    PORTAL_AUTH_DB: createAuthDb(),
+    MEETINGS_KV: meetingsKv,
+  };
+  const cookie = await createSessionCookie();
+
+  try {
+    const response = await worker.fetch(new Request("https://reuniones.example.test/api/meetings", {
+      method: "POST",
+      headers: { cookie, origin: "https://reuniones.example.test", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        title: "Reserva conservada sin cartel",
+        date: "2099-10-29",
+        time: "09:00",
+        duration: "60",
+        room: "sala-pleno",
+        modality: "presencial",
+        url: "",
+      }),
+    }), env);
+    const body = await response.json();
+    const meetings = JSON.parse(await meetingsKv.get("meetings"));
+
+    assert.equal(body.ok, true);
+    assert.equal(body.sign_delivery.sent, false);
+    assert.match(body.sign_delivery.message, /reserva sí quedó guardada/i);
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0].title, "Reserva conservada sin cartel");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("evita avisos repetidos del mismo usuario durante el periodo de seguridad", async () => {
   const graphRequests = [];
   const originalFetch = globalThis.fetch;

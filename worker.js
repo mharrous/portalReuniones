@@ -20,6 +20,7 @@ const MEETINGS_KEY = "meetings";
 const HISTORY_KEY = "meeting_history";
 const DOCK_KEY = "dock_state";
 const NOTIFICATION_COOLDOWN_SECONDS = 60;
+const MAX_INLINE_PDF_BYTES = 2 * 1024 * 1024;
 const SESSION_COOKIE = "reuniones_session";
 const SESSION_TTL_SECONDS = 180 * 24 * 60 * 60;
 const LOGIN_PATH = "/login";
@@ -435,12 +436,16 @@ async function createMeeting(request, env, sessionUser) {
   meetings.push(meeting);
 
   await saveMeetings(env, meetings);
-  const notification = await sendMeetingNotification(env, meeting, sessionUser, "created");
+  const [notification, signDelivery] = await Promise.all([
+    sendMeetingNotification(env, meeting, sessionUser, "created"),
+    sendMeetingSignToRaquel(env, meeting, sessionUser),
+  ]);
   return {
     ok: true,
     notification,
+    sign_delivery: signDelivery,
     sign_url: `/api/meetings/${encodeURIComponent(meeting.id)}/sign.pdf`,
-    message: `Reunión añadida. ${notification.message}`,
+    message: `Reunión añadida. ${notification.message} ${signDelivery.message}`.trim(),
   };
 }
 
@@ -964,16 +969,29 @@ async function meetingSignPdfResponse(env, id) {
   if (!meeting) return jsonResponse({ ok: false, message: "Reunión no encontrada." }, 404);
 
   const bytes = await buildMeetingSignPdf(meeting);
-  const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(meeting.date || "") ? meeting.date : "reserva";
-  const safeRoom = meetingRoomId(meeting).replace(/[^a-z0-9-]/g, "");
   return new Response(bytes, {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `inline; filename="cartel-reserva-${safeDate}-${safeRoom}.pdf"`,
+      "content-disposition": `inline; filename="${meetingSignFileName(meeting)}"`,
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+function meetingSignFileName(meeting) {
+  const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(meeting?.date || "") ? meeting.date : "reserva";
+  const safeRoom = meetingRoomId(meeting).replace(/[^a-z0-9-]/g, "");
+  return `cartel-reserva-${safeDate}-${safeRoom}.pdf`;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function meetingApiPayload(meeting) {
@@ -1078,6 +1096,47 @@ async function sendMeetingNotification(env, meeting, sessionUser, action) {
   }
 }
 
+async function sendMeetingSignToRaquel(env, meeting, sessionUser) {
+  if (String(env.RAQUEL_PDF_NOTIFICATIONS_ENABLED || "false").toLowerCase() !== "true") {
+    return { sent: false, paused: true, recipients: 0, message: "Envío del cartel PDF pausado." };
+  }
+
+  const recipientEmail = String(env.RAQUEL_PDF_RECIPIENT_EMAIL || "").trim().toLowerCase();
+  if (!isValidEmailAddress(recipientEmail)) {
+    return { sent: false, recipients: 0, message: "El correo de Raquel no está configurado." };
+  }
+  const graphConfig = getMicrosoftGraphConfig(env, recipientEmail);
+  if (!graphConfig) {
+    return { sent: false, recipients: 0, message: "El envío del cartel PDF todavía no está configurado." };
+  }
+
+  try {
+    const pdfBytes = await buildMeetingSignPdf(meeting);
+    if (pdfBytes.byteLength > MAX_INLINE_PDF_BYTES) {
+      throw new Error("El cartel PDF supera el tamaño máximo permitido para el envío directo.");
+    }
+    const enriched = enrichMeeting(meeting);
+    const organizerName = sessionUser?.username || "Un compañero";
+    const message = {
+      subject: `Cartel para imprimir: ${enriched.title || "Reunión sin título"}`,
+      text: `Nueva reserva de sala\n\nSe adjunta el cartel PDF para imprimir y colocar en el metacrilato.\n\nSala: ${enriched.room_name}\nFecha: ${enriched.date_label}\nHora: ${enriched.time_range}\nReservada por: ${organizerName}`,
+      html: buildExecutiveMeetingEmail({ ...enriched, url: "" }, organizerName, "Cartel listo para imprimir", meetingStart(meeting)),
+      attachments: [{
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: meetingSignFileName(meeting),
+        contentType: "application/pdf",
+        contentBytes: bytesToBase64(pdfBytes),
+      }],
+    };
+    const accessToken = await requestMicrosoftGraphToken(graphConfig);
+    await sendMicrosoftGraphMessage(graphConfig.senderEmail, accessToken, [recipientEmail], message, { recipientMode: "to" });
+    return { sent: true, recipients: 1, message: "Cartel PDF enviado a Raquel." };
+  } catch (error) {
+    console.error(JSON.stringify({ event: "meeting_sign_email_failed", meetingId: meeting.id, message: error?.message || String(error) }));
+    return { sent: false, recipients: 0, message: "No se pudo enviar el cartel PDF a Raquel; la reserva sí quedó guardada." };
+  }
+}
+
 async function acquireMeetingNotificationCooldown(env, sessionUser) {
   await env.PORTAL_AUTH_DB.prepare(`
     CREATE TABLE IF NOT EXISTS meeting_email_cooldowns (
@@ -1096,13 +1155,13 @@ async function acquireMeetingNotificationCooldown(env, sessionUser) {
   return Boolean(lock);
 }
 
-function getMicrosoftGraphConfig(env) {
+function getMicrosoftGraphConfig(env, recipientOverride = "") {
   const config = Object.freeze({
     tenantId: String(env.MICROSOFT_TENANT_ID || "").trim(),
     clientId: String(env.MICROSOFT_CLIENT_ID || "").trim(),
     clientSecret: String(env.MICROSOFT_CLIENT_SECRET || "").trim(),
     senderEmail: String(env.MICROSOFT_SENDER_EMAIL || "").trim().toLowerCase(),
-    recipientEmail: String(env.MICROSOFT_RECIPIENT_EMAIL || "").trim().toLowerCase(),
+    recipientEmail: String(recipientOverride || env.MICROSOFT_RECIPIENT_EMAIL || "").trim().toLowerCase(),
   });
   return Object.values(config).every(Boolean)
     && isValidEmailAddress(config.senderEmail)
@@ -1132,7 +1191,10 @@ async function requestMicrosoftGraphToken(config) {
   return String(result.access_token);
 }
 
-async function sendMicrosoftGraphMessage(senderEmail, accessToken, recipients, message) {
+async function sendMicrosoftGraphMessage(senderEmail, accessToken, recipients, message, options = {}) {
+  const recipientField = options.recipientMode === "to"
+    ? { toRecipients: recipients.map((address) => ({ emailAddress: { address } })) }
+    : { bccRecipients: recipients.map((address) => ({ emailAddress: { address } })) };
   const request = Object.freeze({
     method: "POST",
     headers: {
@@ -1143,7 +1205,8 @@ async function sendMicrosoftGraphMessage(senderEmail, accessToken, recipients, m
       message: {
         subject: message.subject,
         body: { contentType: "HTML", content: message.html },
-        bccRecipients: recipients.map((address) => ({ emailAddress: { address } })),
+        ...recipientField,
+        attachments: message.attachments,
       },
       saveToSentItems: true,
     }),

@@ -5,3 +5,5 @@ MICROSOFT_CLIENT_SECRET=secreto-de-la-aplicacion
 MICROSOFT_SENDER_EMAIL=correo-remitente
 MICROSOFT_RECIPIENT_EMAIL=correo-del-grupo
 MEETING_NOTIFICATIONS_ENABLED=false
+RAQUEL_PDF_NOTIFICATIONS_ENABLED=true
+RAQUEL_PDF_RECIPIENT_EMAIL=correo-de-la-persona-que-imprime-los-carteles
