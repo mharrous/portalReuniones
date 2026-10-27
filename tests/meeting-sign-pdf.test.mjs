@@ -83,6 +83,7 @@ test("genera un PDF A4 válido para el cartel de reserva", async () => {
 
   assert.ok(bytes instanceof Uint8Array);
   assert.equal(Buffer.from(bytes.subarray(0, 5)).toString(), "%PDF-");
+  assert.match(Buffer.from(bytes).toString("latin1"), /\/Subtype\s*\/Image/);
   assert.ok(bytes.byteLength > 1_000);
   const document = await PDFDocument.load(bytes);
   const { width, height } = document.getPage(0).getSize();

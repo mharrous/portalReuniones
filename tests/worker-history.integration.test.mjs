@@ -439,11 +439,18 @@ test("envía a Raquel el cartel PDF al crear una reserva aunque los avisos gener
     assert.match(graphMessage.subject, /^\[PORTAL\.REUNIONES\] Cartel para imprimir:/);
     assert.deepEqual(graphMessage.toRecipients, [{ emailAddress: { address: "info@example.test" } }]);
     assert.equal(graphMessage.bccRecipients, undefined);
-    assert.equal(graphMessage.attachments.length, 1);
-    assert.equal(graphMessage.attachments[0]["@odata.type"], "#microsoft.graph.fileAttachment");
-    assert.equal(graphMessage.attachments[0].name, "cartel-reserva-2099-10-27-sala-orientacion.pdf");
-    assert.equal(graphMessage.attachments[0].contentType, "application/pdf");
-    assert.equal(Buffer.from(graphMessage.attachments[0].contentBytes, "base64").subarray(0, 5).toString(), "%PDF-");
+    assert.match(graphMessage.body.content, /src="cid:camara-logo"/);
+    assert.equal(graphMessage.attachments.length, 2);
+    const pdfAttachment = graphMessage.attachments.find((attachment) => attachment.contentType === "application/pdf");
+    const logoAttachment = graphMessage.attachments.find((attachment) => attachment.contentType === "image/png");
+    assert.equal(pdfAttachment["@odata.type"], "#microsoft.graph.fileAttachment");
+    assert.equal(pdfAttachment.name, "cartel-reserva-2099-10-27-sala-orientacion.pdf");
+    assert.equal(Buffer.from(pdfAttachment.contentBytes, "base64").subarray(0, 5).toString(), "%PDF-");
+    assert.equal(logoAttachment["@odata.type"], "#microsoft.graph.fileAttachment");
+    assert.equal(logoAttachment.name, "logo-camara-ceuta.png");
+    assert.equal(logoAttachment.isInline, true);
+    assert.equal(logoAttachment.contentId, "camara-logo");
+    assert.equal(Buffer.from(logoAttachment.contentBytes, "base64").subarray(1, 4).toString(), "PNG");
   } finally {
     globalThis.fetch = originalFetch;
   }

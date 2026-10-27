@@ -1,5 +1,6 @@
 import { mergeRecentMeetingHistory } from "./meeting-history.js";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { CAMERA_LOGO_BASE64 } from "./camera-logo.js";
 
 const ROOM_NAME = "Salas de reuniones";
 const DEFAULT_ROOM_ID = "sala-pleno";
@@ -851,6 +852,7 @@ export async function buildMeetingSignPdf(meeting) {
   const enriched = enrichMeeting(meeting);
   const document = await PDFDocument.create();
   const page = document.addPage([PDF_A4_WIDTH, PDF_A4_HEIGHT]);
+  const cameraLogo = await document.embedPng(base64ToBytes(CAMERA_LOGO_BASE64));
   const fonts = {
     regular: await document.embedFont(StandardFonts.Helvetica),
     bold: await document.embedFont(StandardFonts.HelveticaBold),
@@ -877,7 +879,7 @@ export async function buildMeetingSignPdf(meeting) {
     y: signY + PDF_SIGN_HEIGHT - 52,
     width: PDF_SIGN_WIDTH,
     height: 52,
-    color: PDF_COLORS.navy,
+    color: PDF_COLORS.white,
   });
   page.drawRectangle({
     x: signX,
@@ -887,21 +889,20 @@ export async function buildMeetingSignPdf(meeting) {
     color: PDF_COLORS.gold,
   });
 
-  page.drawCircle({ x: contentX + 15, y: signY + PDF_SIGN_HEIGHT - 26, size: 14, borderColor: PDF_COLORS.white, borderWidth: 2.5 });
-  page.drawText("C", { x: contentX + 7.5, y: signY + PDF_SIGN_HEIGHT - 35, size: 23, font: fonts.serif, color: PDF_COLORS.red });
-  page.drawText("CÁMARA DE COMERCIO DE CEUTA", {
-    x: contentX + 42,
-    y: signY + PDF_SIGN_HEIGHT - 23,
-    size: 13,
-    font: fonts.bold,
-    color: PDF_COLORS.white,
+  const logoWidth = 132;
+  const logoHeight = logoWidth * cameraLogo.height / cameraLogo.width;
+  page.drawImage(cameraLogo, {
+    x: contentX,
+    y: signY + PDF_SIGN_HEIGHT - 47,
+    width: logoWidth,
+    height: logoHeight,
   });
   page.drawText("Portal de reserva de salas", {
-    x: contentX + 42,
-    y: signY + PDF_SIGN_HEIGHT - 38,
-    size: 8.5,
-    font: fonts.regular,
-    color: rgb(0.78, 0.84, 0.9),
+    x: contentX + 154,
+    y: signY + PDF_SIGN_HEIGHT - 31,
+    size: 10.5,
+    font: fonts.bold,
+    color: PDF_COLORS.navy,
   });
 
   page.drawText("SALA RESERVADA", {
@@ -994,6 +995,24 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function cameraLogoAttachment() {
+  return {
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: "logo-camara-ceuta.png",
+    contentType: "image/png",
+    contentBytes: CAMERA_LOGO_BASE64,
+    isInline: true,
+    contentId: "camara-logo",
+  };
+}
+
 function meetingApiPayload(meeting) {
   return {
     has_meeting: true,
@@ -1042,7 +1061,7 @@ function buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetin
     ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:24px"><tr><td align="center" bgcolor="#d90429" style="border-radius:8px;background:#d90429;background-image:linear-gradient(#d90429,#d90429)"><a href="${escapeHtml(enriched.url)}" style="display:inline-block;padding:14px 22px;color:#ffffff;text-decoration:none;font-size:15px;line-height:1.2;font-weight:700">&#9654;&nbsp;&nbsp; Unirse a la reunión</a></td></tr></table>`
     : "";
 
-  return `<div data-template="executive-agenda" class="email-shell" style="margin:0;padding:28px 12px;background:#eef2f6;background-image:linear-gradient(#eef2f6,#eef2f6);font-family:Arial,sans-serif;color:#102f50"><style>:root{color-scheme:light only;supported-color-schemes:light only}@media only screen and (max-width:620px){.email-shell{padding:10px 4px!important}.email-main{padding:24px 18px!important}.email-title-cell{padding-left:16px!important}.email-title{font-size:25px!important}.email-detail-cell{display:block!important;width:auto!important}.email-detail-gap{display:none!important}}</style><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);border:1px solid #d7e0e9;border-radius:14px;overflow:hidden"><tr><td bgcolor="#102f50" style="padding:20px 28px;background:#102f50;background-image:linear-gradient(#102f50,#102f50);border-bottom:4px solid #d6ad4b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td valign="middle"><span style="display:inline-block;width:34px;height:34px;line-height:34px;border:4px solid #ffffff;border-radius:50%;text-align:center;color:#ef3340;font-family:Georgia,serif;font-size:23px;font-weight:700">C</span></td><td width="100%" valign="middle" style="padding-left:13px"><strong style="display:block;color:#ffffff;font-family:Georgia,serif;font-size:20px;line-height:1.2">Cámara de Comercio de Ceuta</strong><span style="display:block;margin-top:3px;color:#cbd8e6;font-size:12px;line-height:1.3">Portal de reserva de salas</span></td></tr></table></td></tr><tr><td class="email-main" bgcolor="#ffffff" style="padding:32px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="88" valign="top"><table role="presentation" width="82" cellspacing="0" cellpadding="0" border="0" aria-label="${escapeHtml(dateAriaLabel)}" style="width:82px;border:1px solid #d7e0e9;border-top:5px solid #d90429;border-radius:9px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><tr><td align="center" style="padding:10px 6px 3px"><strong style="display:block;color:#102f50;font-family:Georgia,serif;font-size:34px;line-height:1">${dateDay}</strong></td></tr><tr><td align="center" style="padding:0 6px 10px"><span style="display:block;color:#b1841d;font-size:13px;font-weight:800;letter-spacing:.12em">${dateMonth}</span></td></tr></table></td><td class="email-title-cell" valign="top" style="padding-left:22px"><p style="margin:1px 0 0;color:#d90429;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.15em">${escapeHtml(actionLabel)}</p><h1 class="email-title" style="margin:8px 0 7px;color:#102f50;font-family:Georgia,serif;font-size:30px;line-height:1.15">${escapeHtml(enriched.title || "Reunión sin título")}</h1><p style="margin:0;color:#65758b;font-size:14px;line-height:1.45">${escapeHtml(enriched.date_label)}</p></td></tr><tr><td colspan="2" style="padding-top:28px"><p style="margin:0 0 13px;color:#102f50;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.1em">Resumen de la reserva</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${detailsHtml.join("")}</table>${linkHtml}</td></tr></table></td></tr><tr><td bgcolor="#f5f7fa" style="padding:17px 32px;background:#f5f7fa;background-image:linear-gradient(#f5f7fa,#f5f7fa);border-top:1px solid #dfe5ec"><p style="margin:0;color:#65758b;font-size:12px;line-height:1.45">Aviso automático del Portal de reuniones · Cámara de Comercio de Ceuta</p></td></tr></table></div>`;
+  return `<div data-template="executive-agenda" class="email-shell" style="margin:0;padding:28px 12px;background:#eef2f6;background-image:linear-gradient(#eef2f6,#eef2f6);font-family:Arial,sans-serif;color:#102f50"><style>:root{color-scheme:light only;supported-color-schemes:light only}@media only screen and (max-width:620px){.email-shell{padding:10px 4px!important}.email-main{padding:24px 18px!important}.email-title-cell{padding-left:16px!important}.email-title{font-size:25px!important}.email-detail-cell{display:block!important;width:auto!important}.email-detail-gap{display:none!important}}</style><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;margin:0 auto;border-collapse:separate;border-spacing:0;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);border:1px solid #d7e0e9;border-radius:14px;overflow:hidden"><tr><td bgcolor="#ffffff" style="padding:18px 28px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);border-bottom:4px solid #d6ad4b"><img src="cid:camara-logo" width="230" alt="Cámara de Comercio de Ceuta" style="display:block;width:230px;max-width:100%;height:auto;border:0"></td></tr><tr><td class="email-main" bgcolor="#ffffff" style="padding:32px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="88" valign="top"><table role="presentation" width="82" cellspacing="0" cellpadding="0" border="0" aria-label="${escapeHtml(dateAriaLabel)}" style="width:82px;border:1px solid #d7e0e9;border-top:5px solid #d90429;border-radius:9px;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff)"><tr><td align="center" style="padding:10px 6px 3px"><strong style="display:block;color:#102f50;font-family:Georgia,serif;font-size:34px;line-height:1">${dateDay}</strong></td></tr><tr><td align="center" style="padding:0 6px 10px"><span style="display:block;color:#b1841d;font-size:13px;font-weight:800;letter-spacing:.12em">${dateMonth}</span></td></tr></table></td><td class="email-title-cell" valign="top" style="padding-left:22px"><p style="margin:1px 0 0;color:#d90429;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.15em">${escapeHtml(actionLabel)}</p><h1 class="email-title" style="margin:8px 0 7px;color:#102f50;font-family:Georgia,serif;font-size:30px;line-height:1.15">${escapeHtml(enriched.title || "Reunión sin título")}</h1><p style="margin:0;color:#65758b;font-size:14px;line-height:1.45">${escapeHtml(enriched.date_label)}</p></td></tr><tr><td colspan="2" style="padding-top:28px"><p style="margin:0 0 13px;color:#102f50;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.1em">Resumen de la reserva</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${detailsHtml.join("")}</table>${linkHtml}</td></tr></table></td></tr><tr><td bgcolor="#f5f7fa" style="padding:17px 32px;background:#f5f7fa;background-image:linear-gradient(#f5f7fa,#f5f7fa);border-top:1px solid #dfe5ec"><p style="margin:0;color:#65758b;font-size:12px;line-height:1.45">Aviso automático del Portal de reuniones · Cámara de Comercio de Ceuta</p></td></tr></table></div>`;
 }
 
 export function buildMeetingNotification(meeting, organizerName = "Un compañero", action = "created") {
@@ -1064,6 +1083,7 @@ export function buildMeetingNotification(meeting, organizerName = "Un compañero
     subject: `${actionLabel}: ${enriched.title || "Reunión sin título"}`,
     text: `${actionLabel}\n\n${details.join("\n")}\n\nPortal de reuniones · Cámara de Comercio de Ceuta`,
     html: buildExecutiveMeetingEmail(enriched, organizerName, actionLabel, meetingStart(meeting)),
+    attachments: [cameraLogoAttachment()],
   };
 }
 
@@ -1122,6 +1142,8 @@ async function sendMeetingSignToRaquel(env, meeting, sessionUser) {
       text: `Nueva reserva de sala\n\nSe adjunta el cartel PDF para imprimir y colocar en el metacrilato.\n\nSala: ${enriched.room_name}\nFecha: ${enriched.date_label}\nHora: ${enriched.time_range}\nReservada por: ${organizerName}`,
       html: buildExecutiveMeetingEmail({ ...enriched, url: "" }, organizerName, "Cartel listo para imprimir", meetingStart(meeting)),
       attachments: [{
+        ...cameraLogoAttachment(),
+      }, {
         "@odata.type": "#microsoft.graph.fileAttachment",
         name: meetingSignFileName(meeting),
         contentType: "application/pdf",
