@@ -163,6 +163,16 @@ test("el formulario autenticado muestra las dos modalidades", async () => {
   assert.match(html, /name="modality"/);
   assert.match(html, /value="presencial"/);
   assert.match(html, /value="videoconferencia"/);
+  assert.match(html, /class="room-options"/);
+  assert.match(html, /type="radio" name="room" value="sala-pleno"/);
+  assert.match(html, /type="radio" name="room" value="sala-orientacion"/);
+  assert.match(html, /type="radio" name="room" value="salon-actos"/);
+  assert.match(html, /class="modality-options"/);
+  assert.match(html, /fieldset class="field modality-field"/);
+  assert.match(html, /legend class="field-label">Modalidad<\/legend>/);
+  assert.match(html, /\[name="modality"\]\[value="videoconferencia"\]/);
+  assert.doesNotMatch(html, /<select name="room"/);
+  assert.doesNotMatch(html, /<select name="modality"/);
   assert.doesNotMatch(html, /name="invite_text"/);
   assert.doesNotMatch(html, /Pegar invitación o enlace/);
   assert.match(html, /name="title"[^>]+placeholder="Escribe el título de la reunión"/);

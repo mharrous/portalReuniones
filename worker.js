@@ -1513,7 +1513,8 @@ function renderApp(initialView, sessionUser) {
 .top-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}.session-card{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--navy);font-weight:950;box-shadow:0 10px 24px rgba(11,45,77,.08)}.session-card strong{color:var(--red);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase}.session-card a{color:var(--muted);text-decoration:none;font-size:.88rem}.session-card a:hover{color:var(--red)}@media(max-width:900px){.top-actions{width:100%;justify-content:space-between}.session-card{width:100%;justify-content:center}}
 .history-panel{margin-top:18px}.history-limit{padding:7px 11px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.history-list{display:grid;gap:10px}.history-card{display:grid;grid-template-columns:190px minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px;border:1px solid var(--line);border-left:7px solid var(--navy);border-radius:8px;background:linear-gradient(90deg,#f4f7fb,#fff 24%)}.history-card h3{margin:7px 0 0;font-size:1.2rem}.history-link{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--navy);font-weight:900;text-decoration:none}.history-link:hover{border-color:var(--navy);box-shadow:0 10px 24px rgba(11,45,77,.10)}@media(max-width:900px){.history-card{grid-template-columns:1fr}.history-link{width:100%}}
 .room-chip{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 11px;background:#fff7da;color:#705c00;border:1px solid rgba(214,178,14,.35);font-size:.72rem;text-transform:uppercase;font-weight:950;letter-spacing:.04em}
-.onsite-action{display:flex;align-items:center;justify-content:center;min-height:92px;padding:20px;border-radius:16px;background:#eef4ff;color:var(--navy);font-size:1rem;font-weight:950;text-align:center}.field.is-optional label::after{content:" · opcional";color:var(--muted);font-size:.78rem;font-weight:700}.field.is-required label::after{content:" · obligatorio";color:var(--red);font-size:.78rem;font-weight:800}
+.onsite-action{display:flex;align-items:center;justify-content:center;min-height:92px;padding:20px;border-radius:16px;background:#eef4ff;color:var(--navy);font-size:1rem;font-weight:950;text-align:center}.field.is-optional label::after{content:" · opcional";color:var(--muted);font-size:.78rem;font-weight:700}.field.is-required label::after{content:" · obligatorio";color:var(--red);font-size:.78rem;font-weight:800}.modality-field{margin:0;padding:0;border:0}.modality-field legend{margin-bottom:7px;padding:0}
+#addView .form-panel{padding:34px 40px}#addView .section-heading{align-items:flex-start;margin-bottom:28px}#addView .section-heading h2{font-size:clamp(2rem,3vw,3rem);letter-spacing:-.035em}.form-subtitle{margin:9px 0 0;color:var(--muted);font-size:1rem;font-weight:650}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.field-label{font-weight:900;color:var(--navy)}.reservation-form{display:grid;gap:0}.reservation-section{min-width:0}.reservation-section-title{margin:0 0 18px;color:var(--navy);font-size:1.35rem}.room-selector{margin:0;padding:0 0 30px;border:0;border-bottom:1px solid var(--line)}.room-selector legend{width:100%;margin:0 0 18px;padding:0;color:var(--navy);font-size:1.35rem;font-weight:900}.room-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.room-option{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;min-height:104px;padding:18px;border:1.5px solid var(--line);border-radius:14px;background:#fff;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}.choice-input{position:absolute!important;width:1px!important;height:1px!important;min-height:1px!important;margin:0!important;padding:0!important;opacity:0;pointer-events:none}.room-mark{display:grid;place-items:center;width:50px;height:50px;border-radius:14px;background:#fff8e1;color:#8a6810;font-weight:950;letter-spacing:.04em}.room-copy{display:grid;gap:5px;color:var(--navy);font-weight:950}.room-copy small{color:var(--muted);font-size:.84rem;font-weight:650;line-height:1.35}.selection-dot{width:21px;height:21px;border:2px solid #aab7c7;border-radius:50%;box-shadow:inset 0 0 0 4px #fff}.room-option:hover{border-color:#9cafc2;box-shadow:0 10px 24px rgba(11,45,77,.08)}.room-option:has(input:checked){border-color:var(--navy);background:linear-gradient(135deg,#fffaf0,#fff);box-shadow:0 10px 24px rgba(11,45,77,.10)}.room-option:has(input:checked) .selection-dot{border-color:#b1841d;background:#b1841d}.room-option:has(input:focus-visible){outline:3px solid rgba(225,29,47,.2);outline-offset:3px}.reservation-columns{display:grid;grid-template-columns:1.15fr .85fr;gap:34px;padding:30px 0;border-bottom:1px solid var(--line)}.reservation-columns>section+section{padding-left:34px;border-left:1px solid var(--line)}.details-grid,.schedule-grid{display:grid;gap:16px}.modality-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:hidden;border:1.5px solid var(--line);border-radius:12px;background:#fff}.modality-option{position:relative;display:flex;align-items:center;justify-content:center;min-height:54px;padding:12px 16px;color:var(--navy);font-weight:900;cursor:pointer;transition:background .16s ease,color .16s ease}.modality-option+ .modality-option{border-left:1px solid var(--line)}.modality-option:has(input:checked){background:linear-gradient(135deg,var(--red),#f43f5e);color:#fff}.modality-option:has(input:focus-visible){outline:3px solid rgba(225,29,47,.2);outline-offset:-4px}.notes-section{padding-top:26px}.notes-section textarea{min-height:100px}.reservation-form .form-actions{justify-content:flex-end;padding-top:22px}.reservation-form .form-actions .btn{min-width:260px;min-height:56px;border-radius:14px;box-shadow:0 16px 30px rgba(225,29,47,.22)}@media(max-width:980px){#addView .form-panel{padding:26px}.room-options,.reservation-columns{grid-template-columns:1fr}.reservation-columns{gap:24px}.reservation-columns>section+section{padding:24px 0 0;border-top:1px solid var(--line);border-left:0}.room-option{min-height:88px}}@media(max-width:620px){#addView .form-panel{padding:22px 18px}.modality-options{grid-template-columns:1fr}.modality-option+.modality-option{border-top:1px solid var(--line);border-left:0}.reservation-form .form-actions .btn{width:100%;min-width:0}}
 </style>
 </head>
 <body>
@@ -1548,17 +1549,36 @@ function renderApp(initialView, sessionUser) {
   </section>
 
   <section class="views" id="addView">
-    <section class="form-panel"><div class="section-heading"><div><p class="eyebrow" id="formModeEyebrow">Nueva reserva</p><h2 id="formModeTitle">Añadir reunión</h2></div><button class="btn" data-view="home">Volver</button></div>
-      <form id="addForm" class="form-grid">
-        <div class="field"><label>Título</label><input name="title" maxlength="120" placeholder="Escribe el título de la reunión"></div>
-        <div class="field"><label>Modalidad</label><select name="modality" required><option value="presencial">Presencial</option><option value="videoconferencia" selected>Videoconferencia</option></select></div>
-        <div class="field full is-required" id="meetingUrlField"><label>Enlace de la reunión</label><input name="url" required placeholder="https://..."><span class="field-help" id="meetingUrlHelp">Obligatorio para videoconferencias.</span></div>
-        <div class="field"><label>Fecha</label><input name="date" type="date" required></div>
-        <div class="field"><label>Hora</label><input name="time" type="time" required></div>
-        <div class="field"><label>Sala</label><select name="room" required><option value="sala-pleno" selected>Sala Pleno</option><option value="sala-orientacion">Sala Orientación</option><option value="salon-actos">Salón de Actos</option></select></div>
-        <div class="field"><label>Duración</label><select name="duration"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">120 min</option></select></div>
-        <div class="field full"><label>Observaciones</label><textarea name="notes" placeholder="Notas opcionales"></textarea></div>
-        <div class="form-actions field full"><button class="btn btn-filled" id="saveMeetingButton" type="submit">Guardar reunión</button></div>
+    <section class="form-panel"><div class="section-heading"><div><p class="eyebrow" id="formModeEyebrow">Nueva reserva</p><h2 id="formModeTitle">Añadir reunión</h2><p class="form-subtitle">Selecciona la sala y completa los detalles de la reunión.</p></div><button class="btn" data-view="home">Volver</button></div>
+      <form id="addForm" class="reservation-form">
+        <fieldset class="reservation-section room-selector">
+          <legend>1. Selecciona la sala</legend>
+          <div class="room-options">
+            <label class="room-option"><input class="choice-input" type="radio" name="room" value="sala-pleno" checked required><span class="room-mark" aria-hidden="true">SP</span><span class="room-copy">Sala Pleno<small>Reuniones institucionales</small></span><span class="selection-dot" aria-hidden="true"></span></label>
+            <label class="room-option"><input class="choice-input" type="radio" name="room" value="sala-orientacion" required><span class="room-mark" aria-hidden="true">SO</span><span class="room-copy">Sala Orientación<small>Atención y reuniones de trabajo</small></span><span class="selection-dot" aria-hidden="true"></span></label>
+            <label class="room-option"><input class="choice-input" type="radio" name="room" value="salon-actos" required><span class="room-mark" aria-hidden="true">SA</span><span class="room-copy">Salón de Actos<small>Presentaciones, jornadas y eventos</small></span><span class="selection-dot" aria-hidden="true"></span></label>
+          </div>
+        </fieldset>
+        <div class="reservation-columns">
+          <section class="reservation-section" aria-labelledby="meetingDetailsTitle">
+            <h3 class="reservation-section-title" id="meetingDetailsTitle">2. Detalles de la reunión</h3>
+            <div class="details-grid">
+              <div class="field"><label for="meetingTitle">Título</label><input id="meetingTitle" name="title" maxlength="120" placeholder="Escribe el título de la reunión"></div>
+              <fieldset class="field modality-field"><legend class="field-label">Modalidad</legend><div class="modality-options"><label class="modality-option"><input class="choice-input" type="radio" name="modality" value="presencial" required><span>Presencial</span></label><label class="modality-option"><input class="choice-input" type="radio" name="modality" value="videoconferencia" checked required><span>Videoconferencia</span></label></div></fieldset>
+              <div class="field is-required" id="meetingUrlField"><label for="meetingUrl">Enlace de la reunión</label><input id="meetingUrl" name="url" required placeholder="https://..."><span class="field-help" id="meetingUrlHelp">Obligatorio para videoconferencias.</span></div>
+            </div>
+          </section>
+          <section class="reservation-section" aria-labelledby="scheduleDetailsTitle">
+            <h3 class="reservation-section-title" id="scheduleDetailsTitle">3. Fecha, hora y duración</h3>
+            <div class="schedule-grid">
+              <div class="field"><label for="meetingDate">Fecha</label><input id="meetingDate" name="date" type="date" required></div>
+              <div class="field"><label for="meetingTime">Hora</label><input id="meetingTime" name="time" type="time" required></div>
+              <div class="field"><label for="meetingDuration">Duración</label><select id="meetingDuration" name="duration"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">120 min</option></select></div>
+            </div>
+          </section>
+        </div>
+        <section class="reservation-section notes-section" aria-labelledby="notesTitle"><h3 class="reservation-section-title" id="notesTitle">4. Observaciones</h3><div class="field"><label class="sr-only" for="meetingNotes">Observaciones</label><textarea id="meetingNotes" name="notes" placeholder="Añade cualquier información útil para la reserva"></textarea></div></section>
+        <div class="form-actions"><button class="btn btn-filled" id="saveMeetingButton" type="submit">Guardar reunión</button></div>
       </form>
     </section>
   </section>
@@ -1769,20 +1789,21 @@ function updateModalityFields() {
   const isVideo = form.elements.modality.value === 'videoconferencia';
   const urlField = $('#meetingUrlField');
   form.elements.url.required = isVideo;
+  urlField.hidden = !isVideo;
   urlField.classList.toggle('is-required', isVideo);
   urlField.classList.toggle('is-optional', !isVideo);
   $('#meetingUrlHelp').textContent = isVideo ? 'Obligatorio para videoconferencias.' : 'Opcional para reuniones presenciales.';
 }
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
-$('#addForm [name="modality"]').addEventListener('change', (event) => {
+$$('#addForm [name="modality"]').forEach((input) => input.addEventListener('change', (event) => {
   if (event.currentTarget.value === 'presencial') $('#addForm [name="url"]').value = '';
   updateModalityFields();
-});
+}));
 $('#addForm [name="url"]').addEventListener('input', (event) => {
   const titleInput = $('#addForm [name="title"]');
   if (event.currentTarget.value.startsWith('https://')) {
-    $('#addForm [name="modality"]').value = 'videoconferencia';
+    $('#addForm [name="modality"][value="videoconferencia"]').checked = true;
     updateModalityFields();
   }
   if (titleInput.value.trim() === '' && event.currentTarget.value.startsWith('https://')) {
