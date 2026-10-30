@@ -164,6 +164,8 @@ test("el formulario autenticado muestra las dos modalidades", async () => {
   assert.match(html, /value="presencial"/);
   assert.match(html, /value="videoconferencia"/);
   assert.match(html, /class="room-options"/);
+  assert.equal((html.match(/class="room-icon"/g) || []).length, 3);
+  assert.equal((html.match(/class="modality-icon"/g) || []).length, 2);
   assert.match(html, /type="radio" name="room" value="sala-pleno"/);
   assert.match(html, /type="radio" name="room" value="sala-orientacion"/);
   assert.match(html, /type="radio" name="room" value="salon-actos"/);
