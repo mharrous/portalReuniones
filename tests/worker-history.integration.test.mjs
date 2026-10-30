@@ -171,6 +171,7 @@ test("el formulario autenticado muestra las dos modalidades", async () => {
   assert.match(html, /fieldset class="field modality-field"/);
   assert.match(html, /legend class="field-label">Modalidad<\/legend>/);
   assert.match(html, /\[name="modality"\]\[value="videoconferencia"\]/);
+  assert.match(html, /#meetingUrlField\[hidden\]\{display:none!important\}/);
   assert.doesNotMatch(html, /<select name="room"/);
   assert.doesNotMatch(html, /<select name="modality"/);
   assert.doesNotMatch(html, /name="invite_text"/);
