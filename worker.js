@@ -1550,8 +1550,7 @@ function renderApp(initialView, sessionUser) {
   <section class="views" id="addView">
     <section class="form-panel"><div class="section-heading"><div><p class="eyebrow" id="formModeEyebrow">Nueva reserva</p><h2 id="formModeTitle">Añadir reunión</h2></div><button class="btn" data-view="home">Volver</button></div>
       <form id="addForm" class="form-grid">
-        <div class="field full"><label>Pegar invitación o enlace</label><textarea class="quick-paste" name="invite_text" placeholder="Pega aquí una invitación completa de Teams, Zoom, Google Meet, Webex o solo el enlace."></textarea><span class="field-help">Opcional. El portal intentará rellenar título y enlace automáticamente.</span></div>
-        <div class="field"><label>Título</label><input name="title" maxlength="120" placeholder="Se puede autocompletar"></div>
+        <div class="field"><label>Título</label><input name="title" maxlength="120" placeholder="Escribe el título de la reunión"></div>
         <div class="field"><label>Modalidad</label><select name="modality" required><option value="presencial">Presencial</option><option value="videoconferencia" selected>Videoconferencia</option></select></div>
         <div class="field full is-required" id="meetingUrlField"><label>Enlace de la reunión</label><input name="url" required placeholder="https://..."><span class="field-help" id="meetingUrlHelp">Obligatorio para videoconferencias.</span></div>
         <div class="field"><label>Fecha</label><input name="date" type="date" required></div>
@@ -1734,7 +1733,6 @@ function editMeeting(id) {
 
   const form = $('#addForm');
   editingMeetingId = id;
-  form.elements.invite_text.value = '';
   form.elements.title.value = meeting.title || '';
   form.elements.url.value = meeting.url || '';
   form.elements.date.value = meeting.date || '';
@@ -1765,60 +1763,6 @@ function platformFromUrl(url) {
   return 'Otro';
 }
 
-function cleanTitle(text) {
-  return String(text || '')
-    .replace(/^asunto\\s*:/i, '')
-    .replace(/^subject\\s*:/i, '')
-    .replace(/^título\\s*:/i, '')
-    .replace(/^titulo\\s*:/i, '')
-    .trim()
-    .slice(0, 120);
-}
-
-function looksLikeTitle(line) {
-  const value = String(line || '').trim();
-  const lowerValue = value.toLowerCase();
-
-  if (value.length < 4 || value.startsWith('http')) return false;
-
-  return ![
-    'microsoft teams', 'unirse a la reunión', 'unirse a la reunion',
-    'join the meeting', 'meeting id', 'id. de reunión', 'id. de reunion',
-    'código de acceso', 'codigo de acceso', 'passcode', 'contraseña',
-    'google meet', 'zoom', 'webex', 'obtenga más información',
-    'obtenga mas informacion'
-  ].some((blocked) => lowerValue.includes(blocked));
-}
-
-function extractTitle(text) {
-  const lines = String(text || '').split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
-  const labelled = lines.find((line) => /^(asunto|subject|título|titulo)\\s*:/i.test(line));
-
-  if (labelled) return cleanTitle(labelled);
-
-  const urlIndex = lines.findIndex((line) => line.includes('https://'));
-  const titleCandidates = (urlIndex > 0 ? lines.slice(0, urlIndex) : lines).filter(looksLikeTitle);
-
-  return titleCandidates.length > 0 ? cleanTitle(titleCandidates[0]) : '';
-}
-
-function fillMeetingFormFromText(text) {
-  const titleInput = $('#addForm [name="title"]');
-  const urlInput = $('#addForm [name="url"]');
-  const urlMatch = String(text || '').match(/https:\\/\\/[^\\s<>"']+/i);
-
-  if (urlMatch && (urlInput.value.trim() === '' || text === urlInput.value)) {
-    urlInput.value = urlMatch[0].replace(/[),.;]+$/, '');
-    $('#addForm [name="modality"]').value = 'videoconferencia';
-    updateModalityFields();
-  }
-
-  if (titleInput.value.trim() === '') {
-    const extractedTitle = extractTitle(text);
-    titleInput.value = extractedTitle || (urlInput.value ? 'Reunión de ' + platformFromUrl(urlInput.value) : '');
-  }
-}
-
 function updateModalityFields() {
   const form = $('#addForm');
   if (!form) return;
@@ -1831,7 +1775,6 @@ function updateModalityFields() {
 }
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
-$('#addForm [name="invite_text"]').addEventListener('input', (event) => fillMeetingFormFromText(event.currentTarget.value));
 $('#addForm [name="modality"]').addEventListener('change', (event) => {
   if (event.currentTarget.value === 'presencial') $('#addForm [name="url"]').value = '';
   updateModalityFields();

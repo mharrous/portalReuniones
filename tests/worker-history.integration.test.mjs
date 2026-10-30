@@ -163,6 +163,9 @@ test("el formulario autenticado muestra las dos modalidades", async () => {
   assert.match(html, /name="modality"/);
   assert.match(html, /value="presencial"/);
   assert.match(html, /value="videoconferencia"/);
+  assert.doesNotMatch(html, /name="invite_text"/);
+  assert.doesNotMatch(html, /Pegar invitación o enlace/);
+  assert.match(html, /name="title"[^>]+placeholder="Escribe el título de la reunión"/);
 });
 
 test("la API permite el mismo horario en salas distintas y bloquea solapes por sala", async () => {
